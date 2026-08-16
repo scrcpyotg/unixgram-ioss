@@ -1,1 +1,71 @@
+name: Build unsigned IPA
 
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build iPhone app without code signing
+        run: |
+          set -o pipefail
+          mkdir -p build
+
+          xcodebuild \
+            -project UnixgramFork.xcodeproj \
+            -scheme UnixgramFork \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$PWD/build/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build | tee build/build.log
+
+      - name: Package IPA
+        run: |
+          APP_PATH="$(find "$PWD/build/DerivedData/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -print -quit)"
+
+          if [ -z "$APP_PATH" ]; then
+            echo "No .app found"
+            exit 1
+          fi
+
+          rm -rf Payload Unixgram-unsigned.ipa
+          mkdir Payload
+          cp -R "$APP_PATH" Payload/
+
+          zip -qry Unixgram-unsigned.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Unixgram-iOS-v0.6-unsigned-IPA
+          path: Unixgram-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcode-build-log
+          path: build/build.log
+          if-no-files-found: ignore
