@@ -1,0 +1,106 @@
+import SwiftUI
+
+struct RootView: View {
+    @EnvironmentObject private var session: AppSession
+
+    var body: some View {
+        Group {
+            if session.isAuthenticated {
+                MainShellView()
+            } else {
+                RegistrationView()
+            }
+        }
+        .background(UGTheme.bg.ignoresSafeArea())
+        .preferredColorScheme(.dark)
+    }
+}
+
+struct MainShellView: View {
+    @EnvironmentObject private var session: AppSession
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Group {
+                switch session.selectedTab {
+                case .home:
+                    NavigationStack { FeedHomeView() }
+                case .discover:
+                    NavigationStack { CommunitiesView() }
+                case .notifications:
+                    NavigationStack { NotificationsView() }
+                case .messages:
+                    NavigationStack { MessagesView() }
+                case .stats:
+                    NavigationStack { CreatorStudioView() }
+                case .profile:
+                    NavigationStack { ProfileView() }
+                }
+            }
+            .padding(.bottom, 86)
+
+            UnixgramDock(selected: $session.selectedTab, unread: 6)
+                .padding(.horizontal, 18)
+                .padding(.bottom, 8)
+        }
+        .background(Color.black.ignoresSafeArea())
+    }
+}
+
+private struct UnixgramDock: View {
+    @Binding var selected: MainTab
+    var unread: Int
+
+    private let items: [(MainTab, String)] = [
+        (.home, "house"),
+        (.discover, "safari"),
+        (.notifications, "bell"),
+        (.messages, "envelope"),
+        (.stats, "chart.bar"),
+        (.profile, "person.crop.circle")
+    ]
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(items, id: \.0) { tab, icon in
+                Button {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                        selected = tab
+                    }
+                } label: {
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: selected == tab ? "\(icon).fill" : icon)
+                            .font(.system(size: 23, weight: .semibold))
+                            .foregroundStyle(selected == tab ? Color.white : Color.white.opacity(0.68))
+                            .frame(width: 48, height: 48)
+                            .background(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(selected == tab ? Color.white.opacity(0.08) : Color.clear)
+                            )
+
+                        if tab == .notifications && unread > 0 {
+                            Text("\(unread)")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(minWidth: 22, minHeight: 22)
+                                .background(Color.purple)
+                                .clipShape(Circle())
+                                .offset(x: 4, y: -4)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(Color.black.opacity(0.93))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
+        )
+    }
+}
