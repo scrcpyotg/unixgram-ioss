@@ -1,4 +1,4 @@
-name: Build unsigned IPA
+name: Build 3uTools-ready IPA
 
 on:
   workflow_dispatch:
@@ -22,25 +22,18 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Build iPhone app without code signing
+      - name: Build unsigned device app
         run: |
           set -o pipefail
+          rm -rf build Payload Unixgram-3uTools.ipa
           mkdir -p build
 
-          xcodebuild \
-            -project UnixgramFork.xcodeproj \
-            -scheme UnixgramFork \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath "$PWD/build/DerivedData" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            build | tee build/build.log
+          xcodebuild             -project UnixgramFork.xcodeproj             -scheme UnixgramFork             -configuration Release             -sdk iphoneos             -destination 'generic/platform=iOS'             -derivedDataPath "$PWD/build/DerivedData"             ONLY_ACTIVE_ARCH=NO             ARCHS=arm64             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             CODE_SIGN_IDENTITY=""             DEVELOPMENT_TEAM=""             build | tee build/build.log
 
-      - name: Package IPA
+      - name: Validate app bundle
         run: |
+          set -euo pipefail
+
           APP_PATH="$(find "$PWD/build/DerivedData/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -print -quit)"
 
           if [ -z "$APP_PATH" ]; then
@@ -48,17 +41,62 @@ jobs:
             exit 1
           fi
 
-          rm -rf Payload Unixgram-unsigned.ipa
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+
+          echo "---- APP CONTENTS ----"
+          ls -la "$APP_PATH"
+
+          echo "---- INFO.PLIST ----"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP_PATH/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_PATH/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" "$APP_PATH/Info.plist" || true
+
+          EXECUTABLE=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_PATH/Info.plist")
+          if [ ! -f "$APP_PATH/$EXECUTABLE" ]; then
+            echo "Executable missing: $APP_PATH/$EXECUTABLE"
+            exit 1
+          fi
+
+          file "$APP_PATH/$EXECUTABLE"
+          lipo -info "$APP_PATH/$EXECUTABLE" || true
+
+      - name: Sanitize for 3uTools resigning
+        run: |
+          set -euo pipefail
+
+          # Remove any signature/provisioning remnants before third-party signing.
+          rm -rf "$APP_PATH/_CodeSignature"
+          rm -f "$APP_PATH/embedded.mobileprovision"
+
+          # Remove macOS extended attributes that can upset resign/install tools.
+          xattr -cr "$APP_PATH" || true
+
+          # Strip Finder metadata if present.
+          find "$APP_PATH" -name ".DS_Store" -delete
+
+          # Verify no nested frameworks/plugins are carrying stale signatures.
+          find "$APP_PATH" -type d -name "_CodeSignature" -prune -exec rm -rf {} + || true
+          find "$APP_PATH" -name "embedded.mobileprovision" -delete || true
+
+      - name: Package clean IPA
+        run: |
+          set -euo pipefail
+
+          rm -rf Payload Unixgram-3uTools.ipa
           mkdir Payload
           cp -R "$APP_PATH" Payload/
 
-          zip -qry Unixgram-unsigned.ipa Payload
+          # ditto is the safest macOS way to create an IPA-compatible zip.
+          /usr/bin/ditto -c -k --keepParent Payload Unixgram-3uTools.ipa
+
+          echo "---- IPA CONTENTS ----"
+          unzip -l Unixgram-3uTools.ipa | head -80
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Unixgram-iOS-v0.6-unsigned-IPA
-          path: Unixgram-unsigned.ipa
+          name: Unixgram-v0.7-3uTools-ready
+          path: Unixgram-3uTools.ipa
           if-no-files-found: error
           retention-days: 14
 
@@ -66,6 +104,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: xcode-build-log
+          name: xcode-build-log-v0.7
           path: build/build.log
           if-no-files-found: ignore
