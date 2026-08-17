@@ -129,6 +129,7 @@ struct UnixgramRealProfileView: View {
                     .background(Color.black)
                 tabContent
             }
+            .containerRelativeFrame(.horizontal)
         }
         .background(Color.black)
         .refreshable {
@@ -174,43 +175,50 @@ struct UnixgramRealProfileView: View {
                     endPoint: .bottom
                 )
 
-                ZStack {
-                    VStack(alignment: .center, spacing: 2) {
-                        HStack(spacing: 5) {
-                            Text(displayName)
-                                .font(.system(size: 20, weight: .bold))
-                                .foregroundStyle(accent ?? Color.white)
+                GeometryReader { proxy in
+                    let sideReserve: CGFloat = isOwnProfile ? 116 : 68
+                    let centerWidth = max(110, proxy.size.width - sideReserve * 2)
+
+                    ZStack {
+                        VStack(alignment: .center, spacing: 2) {
+                            HStack(spacing: 5) {
+                                Text(displayName)
+                                    .font(.system(size: 20, weight: .bold))
+                                    .foregroundStyle(accent ?? Color.white)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.70)
+
+                                if let gift = profile?.statusGift {
+                                    statusGiftButton(gift, size: 21)
+                                }
+                            }
+                            .frame(maxWidth: centerWidth)
+
+                            Text("\(profile?.postsCount ?? content.posts.count) постов")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                                 .lineLimit(1)
-                                .minimumScaleFactor(0.78)
+                        }
+                        .frame(width: centerWidth)
 
-                            if let gift = profile?.statusGift {
-                                statusGiftButton(gift, size: 21)
-                                    .fixedSize()
+                        HStack(spacing: 0) {
+                            circleActionButton("chevron.left") { dismiss() }
+
+                            Spacer(minLength: 0)
+
+                            HStack(spacing: 8) {
+                                if isOwnProfile {
+                                    profileViewsButton(profile?.profileViews)
+                                }
+                                circleActionButton("qrcode") {}
                             }
                         }
-
-                        Text("\(profile?.postsCount ?? content.posts.count) постов")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                        .padding(.horizontal, 16)
+                        .frame(width: proxy.size.width)
                     }
-                    .padding(.horizontal, isOwnProfile ? 112 : 68)
-
-                    HStack(spacing: 0) {
-                        circleActionButton("chevron.left") { dismiss() }
-
-                        Spacer(minLength: 0)
-
-                        HStack(spacing: 8) {
-                            if isOwnProfile {
-                                profileViewsButton(profile?.profileViews)
-                            }
-                            circleActionButton("qrcode") {}
-                        }
-                    }
+                    .frame(width: proxy.size.width, height: 52)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 16)
+                .frame(height: 52)
                 .padding(.top, 15)
             }
 
@@ -228,15 +236,15 @@ struct UnixgramRealProfileView: View {
                             .stroke(accent?.opacity(0.78) ?? Color.clear, lineWidth: accent == nil ? 0 : 2)
                     )
                     .offset(y: -59)
-                    .fixedSize()
 
                     Spacer(minLength: 0)
 
                     profileActions(profile)
-                        .frame(maxWidth: 190, alignment: .trailing)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: isOwnProfile ? 186 : nil, alignment: .trailing)
+                        .layoutPriority(1)
                 }
                 .frame(maxWidth: .infinity)
+                .clipped()
                 .padding(.bottom, -59)
 
                 HStack(spacing: 7) {
@@ -269,8 +277,10 @@ struct UnixgramRealProfileView: View {
                         }
                         .font(.caption.bold())
                         .foregroundStyle(.secondary)
-                        .padding(.horizontal, 9)
+                        .padding(.horizontal, 8)
                         .frame(height: 30)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .layoutPriority(-1)
                         .background(Color.white.opacity(0.06))
                         .clipShape(Capsule())
                     }
@@ -376,46 +386,24 @@ struct UnixgramRealProfileView: View {
             .padding(.bottom, 0)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity)
+        .containerRelativeFrame(.horizontal)
     }
 
     @ViewBuilder
     private func profileActions(_ profile: UGPublicProfile?) -> some View {
         if isOwnProfile {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 6) {
-                    Button("Редактировать") {
-                        showSettings = true
-                    }
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(premiumAccent ?? Color.white)
-                    .padding(.horizontal, 13)
-                    .frame(height: 42)
-                    .background(Color.black)
-                    .overlay(
-                        Capsule().stroke(
-                            premiumAccent?.opacity(0.55) ?? Color.white.opacity(0.14),
-                            lineWidth: 1
-                        )
-                    )
-                    .clipShape(Capsule())
-                    .fixedSize(horizontal: true, vertical: false)
-
-                    ownProfileActionButtons
+            HStack(spacing: 6) {
+                Button {
+                    showSettings = true
+                } label: {
+                    profileActionIcon("pencil")
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Редактировать профиль")
 
-                HStack(spacing: 6) {
-                    Button {
-                        showSettings = true
-                    } label: {
-                        profileActionIcon("pencil")
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Редактировать профиль")
-
-                    ownProfileActionButtons
-                }
+                ownProfileActionButtons
             }
+            .frame(width: 186, alignment: .trailing)
         } else {
             HStack(spacing: 7) {
                 Button {
