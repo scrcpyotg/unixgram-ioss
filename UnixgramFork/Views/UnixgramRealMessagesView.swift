@@ -69,6 +69,7 @@ struct UnixgramRealMessagesView: View {
                         HStack {
                             Text(peerName(conversation))
                                 .font(.system(size: 17, weight: .bold))
+                                .foregroundStyle(peerAccent(conversation) ?? Color.primary)
                                 .lineLimit(1)
 
                             Spacer()
@@ -94,7 +95,7 @@ struct UnixgramRealMessagesView: View {
                                     .foregroundStyle(.white)
                                     .padding(.horizontal, 7)
                                     .frame(height: 22)
-                                    .background(.purple)
+                                    .background(peerAccent(conversation) ?? Color.purple)
                                     .clipShape(Capsule())
                             }
                         }
@@ -175,6 +176,17 @@ struct UnixgramRealMessagesView: View {
 
     private func peerAvatar(_ conversation: UGConversationDTO) -> String {
         conversation.avatarUrl ?? conversation.members?.first?.avatarUrl ?? ""
+    }
+
+    private func peerAccent(_ conversation: UGConversationDTO) -> Color? {
+        guard conversation.title?.isEmpty != false,
+              let peer = conversation.members?.first
+        else { return nil }
+
+        return UnixgramPremiumPalette.accent(
+            premium: peer.premium,
+            palette: peer.profilePalette
+        )
     }
 
     private func shortDate(_ raw: String) -> String {
