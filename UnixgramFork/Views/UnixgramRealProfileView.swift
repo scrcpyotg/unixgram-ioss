@@ -174,40 +174,48 @@ struct UnixgramRealProfileView: View {
                     endPoint: .bottom
                 )
 
-                HStack {
-                    circleActionButton("chevron.left") { dismiss() }
-                    Spacer()
-
+                ZStack {
                     VStack(alignment: .center, spacing: 2) {
                         HStack(spacing: 5) {
                             Text(displayName)
                                 .font(.system(size: 20, weight: .bold))
                                 .foregroundStyle(accent ?? Color.white)
                                 .lineLimit(1)
+                                .minimumScaleFactor(0.78)
 
                             if let gift = profile?.statusGift {
                                 statusGiftButton(gift, size: 21)
+                                    .fixedSize()
                             }
                         }
+
                         Text("\(profile?.postsCount ?? content.posts.count) постов")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
+                    .padding(.horizontal, isOwnProfile ? 112 : 68)
 
-                    Spacer()
-                    HStack(spacing: 8) {
-                        if isOwnProfile {
-                            profileViewsButton(profile?.profileViews)
+                    HStack(spacing: 0) {
+                        circleActionButton("chevron.left") { dismiss() }
+
+                        Spacer(minLength: 0)
+
+                        HStack(spacing: 8) {
+                            if isOwnProfile {
+                                profileViewsButton(profile?.profileViews)
+                            }
+                            circleActionButton("qrcode") {}
                         }
-                        circleActionButton("qrcode") {}
                     }
                 }
-                .padding(.horizontal, 18)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 16)
                 .padding(.top, 15)
             }
 
             VStack(alignment: .leading, spacing: 13) {
-                HStack(alignment: .top) {
+                HStack(alignment: .top, spacing: 8) {
                     avatar(
                         url: profile?.avatarUrl ?? account?.avatarUrl,
                         name: displayName
@@ -220,17 +228,24 @@ struct UnixgramRealProfileView: View {
                             .stroke(accent?.opacity(0.78) ?? Color.clear, lineWidth: accent == nil ? 0 : 2)
                     )
                     .offset(y: -59)
+                    .fixedSize()
 
-                    Spacer(minLength: 8)
+                    Spacer(minLength: 0)
 
                     profileActions(profile)
+                        .frame(maxWidth: 190, alignment: .trailing)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .frame(maxWidth: .infinity)
                 .padding(.bottom, -59)
 
                 HStack(spacing: 7) {
                     Text(displayName)
                         .font(.system(size: 27, weight: .bold))
                         .foregroundStyle(accent ?? Color.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                        .layoutPriority(1)
 
                     if let badge = profile?.verificationBadge ?? account?.verificationBadge,
                        badge != "NONE" {
@@ -359,78 +374,104 @@ struct UnixgramRealProfileView: View {
             }
             .padding(.horizontal, 18)
             .padding(.bottom, 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder
     private func profileActions(_ profile: UGPublicProfile?) -> some View {
         if isOwnProfile {
-            Button("Редактировать") {
-                showSettings = true
-            }
-            .font(.system(size: 17, weight: .bold))
-            .foregroundStyle(premiumAccent ?? Color.white)
-            .padding(.horizontal, 18)
-            .frame(height: 44)
-            .background(Color.black)
-            .overlay(
-                Capsule().stroke(
-                    premiumAccent?.opacity(0.55) ?? Color.white.opacity(0.14),
-                    lineWidth: 1
-                )
-            )
-            .clipShape(Capsule())
-
-            Button {
-                showCreatePost = true
-            } label: {
-                profileActionIcon("square.and.pencil")
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Создать пост")
-
-            Button {
-                showGiftMarket = true
-            } label: {
-                profileActionIcon("gift.fill", purple: true)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Маркет подарков")
-
-            NavigationLink {
-                UnixPlaceMarketView()
-            } label: {
-                profileActionIcon("bag.fill", purple: true)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Маркет юзов")
-        } else {
-            Button {
-                showGiftMarket = true
-            } label: {
-                profileActionIcon("gift.fill", purple: true)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Отправить подарок")
-
-            if profile?.isFollowing == true {
-                Text("Читаю")
-                    .font(.system(size: 16, weight: .bold))
-                    .padding(.horizontal, 17)
-                    .frame(height: 42)
-                    .background(Color.white.opacity(0.06))
-                    .overlay(Capsule().stroke(Color.white.opacity(0.14)))
-                    .clipShape(Capsule())
-            } else if profile?.followRequestSent == true {
-                Text("Заявка отправлена")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.secondary)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    Button("Редактировать") {
+                        showSettings = true
+                    }
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(premiumAccent ?? Color.white)
                     .padding(.horizontal, 13)
                     .frame(height: 42)
-                    .background(Color.white.opacity(0.05))
+                    .background(Color.black)
+                    .overlay(
+                        Capsule().stroke(
+                            premiumAccent?.opacity(0.55) ?? Color.white.opacity(0.14),
+                            lineWidth: 1
+                        )
+                    )
                     .clipShape(Capsule())
+                    .fixedSize(horizontal: true, vertical: false)
+
+                    ownProfileActionButtons
+                }
+
+                HStack(spacing: 6) {
+                    Button {
+                        showSettings = true
+                    } label: {
+                        profileActionIcon("pencil")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Редактировать профиль")
+
+                    ownProfileActionButtons
+                }
+            }
+        } else {
+            HStack(spacing: 7) {
+                Button {
+                    showGiftMarket = true
+                } label: {
+                    profileActionIcon("gift.fill", purple: true)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Отправить подарок")
+
+                if profile?.isFollowing == true {
+                    Text("Читаю")
+                        .font(.system(size: 16, weight: .bold))
+                        .padding(.horizontal, 17)
+                        .frame(height: 42)
+                        .background(Color.white.opacity(0.06))
+                        .overlay(Capsule().stroke(Color.white.opacity(0.14)))
+                        .clipShape(Capsule())
+                } else if profile?.followRequestSent == true {
+                    Text("Заявка отправлена")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 13)
+                        .frame(height: 42)
+                        .background(Color.white.opacity(0.05))
+                        .clipShape(Capsule())
+                }
             }
         }
+    }
+
+    @ViewBuilder
+    private var ownProfileActionButtons: some View {
+        Button {
+            showCreatePost = true
+        } label: {
+            profileActionIcon("square.and.pencil")
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Создать пост")
+
+        Button {
+            showGiftMarket = true
+        } label: {
+            profileActionIcon("gift.fill", purple: true)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Маркет подарков")
+
+        NavigationLink {
+            UnixPlaceMarketView()
+        } label: {
+            profileActionIcon("bag.fill", purple: true)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Маркет юзов")
     }
 
     private func profileActionIcon(_ icon: String, purple: Bool = false) -> some View {
