@@ -5,6 +5,8 @@ struct UnixgramAllRealFeedView: View {
     @EnvironmentObject private var liveSession: UnixgramLiveSession
     @StateObject private var commerce = UnixgramCommerceStore.shared
 
+    @AppStorage("unixgram.feed.showSshkmGskm") private var showSshkmGskm = false
+
     @State private var loadingMore = false
     @State private var showCreatePost = false
     @State private var feedMode: FeedMode = .forYou
@@ -22,6 +24,7 @@ struct UnixgramAllRealFeedView: View {
             LazyVStack(spacing: 12) {
                 homeHeader
                 feedSelector
+                contentFilter
                 liveStoriesHeader
                 realComposer
 
@@ -64,7 +67,6 @@ struct UnixgramAllRealFeedView: View {
 
             await commerce.refreshStars(fallback: liveSession.currentUser)
 
-            // Load the rest after the main timeline is already available.
             Task {
                 await store.refreshAll()
             }
@@ -139,6 +141,35 @@ struct UnixgramAllRealFeedView: View {
         .overlay(Capsule().stroke(Color.white.opacity(0.06), lineWidth: 1))
     }
 
+    private var contentFilter: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                showSshkmGskm.toggle()
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: showSshkmGskm ? "eye" : "eye.slash")
+                    .font(.system(size: 13, weight: .semibold))
+
+                Text(showSshkmGskm ? "СШКМ/ГСКМ показываются" : "СШКМ/ГСКМ скрыты")
+                    .font(.system(size: 13, weight: .semibold))
+
+                Spacer()
+
+                Text(showSshkmGskm ? "Скрыть" : "Показать")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.purple)
+            }
+            .foregroundStyle(.white.opacity(0.82))
+            .padding(.horizontal, 14)
+            .frame(height: 40)
+            .background(Color.white.opacity(0.035))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.07)))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+    }
+
     private var starsText: String {
         if let balance = commerce.starsBalance ?? liveSession.currentUser?.resolvedStarsBalance {
             return String(balance)
@@ -147,22 +178,31 @@ struct UnixgramAllRealFeedView: View {
     }
 
     private var visibleFeed: [UGHARFeedPost] {
+        let modeFeed: [UGHARFeedPost]
+
         switch feedMode {
         case .forYou:
-            return store.feed
+            modeFeed = store.feed
         case .following:
-            // `isFollowing` comes from Unixgram's real feed author payload.
-            return store.feed.filter { $0.author?.isFollowing == true }
+            modeFeed = store.feed.filter { $0.author?.isFollowing == true }
         case .tags:
-            // The web feed payload does not expose a separate tag-feed endpoint in the
-            // captured HAR. Use only real posts whose content actually contains hashtags.
-            return store.feed.filter { post in
+            modeFeed = store.feed.filter { post in
                 guard let content = post.content else { return false }
                 return content.split(whereSeparator: { $0.isWhitespace }).contains { token in
                     token.hasPrefix("#") && token.count > 1
                 }
             }
         }
+
+        guard !showSshkmGskm else { return modeFeed }
+        return modeFeed.filter { !containsMutedTag($0.content) }
+    }
+
+    private func containsMutedTag(_ content: String?) -> Bool {
+        guard let content, !content.isEmpty else { return false }
+
+        let pattern = #"(?iu)(?<![\p{L}\p{N}_])#(?:сшкм|гскм)(?![\p{L}\p{N}_])"#
+        return content.range(of: pattern, options: .regularExpression) != nil
     }
 
     private var emptyForCurrentMode: some View {
@@ -173,6 +213,14 @@ struct UnixgramAllRealFeedView: View {
 
             Text(emptyTitle)
                 .font(.headline)
+
+            if !showSshkmGskm && store.feed.contains(where: { containsMutedTag($0.content) }) {
+                Button("Показать скрытые посты") {
+                    showSshkmGskm = true
+                }
+                .buttonStyle(.bordered)
+                .tint(.purple)
+            }
 
             if let error = store.feedErrorMessage {
                 Text(error)
@@ -190,6 +238,14 @@ struct UnixgramAllRealFeedView: View {
 
     private var emptyTitle: String {
         if store.feedErrorMessage != nil { return "Не удалось загрузить ленту" }
+
+        if !showSshkmGskm,
+           !store.feed.isEmpty,
+           visibleFeed.isEmpty,
+           store.feed.contains(where: { containsMutedTag($0.content) }) {
+            return "Все посты в этой ленте скрыты фильтром"
+        }
+
         switch feedMode {
         case .forYou: return "В ленте пока нет постов"
         case .following: return "Нет постов от ваших подписок"
@@ -538,7 +594,6 @@ struct HARFeedPostCard: View {
     }
 }
 
-
 private extension Array where Element == String {
     func uniqueMediaURLs() -> [String] {
         var seen = Set<String>()
@@ -548,9 +603,6 @@ private extension Array where Element == String {
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
 
-            // Unixgram can expose the same attachment both as `imageUrl`
-            // and as the first element of `imageUrls`. Treat those as one
-            // media item instead of rendering a fake two-photo grid.
             let key: String
             if let url = URL(string: trimmed),
                let scheme = url.scheme?.lowercased(),
