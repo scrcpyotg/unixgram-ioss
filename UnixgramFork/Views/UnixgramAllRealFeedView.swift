@@ -285,6 +285,12 @@ struct UnixgramAllRealFeedView: View {
                             ))
                         Text(author.displayName ?? author.username)
                             .font(.caption2)
+                            .foregroundStyle(
+                                UnixgramPremiumPalette.accent(
+                                    premium: author.premium,
+                                    palette: author.profilePalette
+                                ) ?? Color.primary
+                            )
                             .lineLimit(1)
                             .frame(width: 72)
                     }
@@ -396,6 +402,13 @@ struct HARFeedPostCard: View {
 
     @State private var selectedMedia: UnixgramMediaViewerItem?
 
+    private var authorAccent: Color? {
+        UnixgramPremiumPalette.accent(
+            premium: post.author?.premium,
+            palette: post.author?.profilePalette
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 11) {
@@ -418,12 +431,13 @@ struct HARFeedPostCard: View {
                             } label: {
                                 Text(post.author?.displayName ?? username)
                                     .font(.system(size: 16, weight: .bold))
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(authorAccent ?? Color.white)
                             }
                             .buttonStyle(.plain)
                         } else {
                             Text(post.author?.displayName ?? post.community?.name ?? "Unixgram")
                                 .font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(authorAccent ?? Color.white)
                         }
                         if post.author?.verificationBadge != "NONE" || post.community?.verified == true {
                             Image(systemName: "checkmark.seal.fill")
@@ -432,7 +446,7 @@ struct HARFeedPostCard: View {
                         }
                         if post.author?.premium == true {
                             Image(systemName: "sparkles")
-                                .foregroundStyle(.purple)
+                                .foregroundStyle(authorAccent ?? Color.purple)
                                 .font(.caption)
                         }
                     }
@@ -500,7 +514,10 @@ struct HARFeedPostCard: View {
         }
         .padding(14)
         .background(Color.white.opacity(0.035))
-        .overlay(RoundedRectangle(cornerRadius: 22).stroke(Color.white.opacity(0.075)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22)
+                .stroke(authorAccent?.opacity(0.20) ?? Color.white.opacity(0.075))
+        )
         .clipShape(RoundedRectangle(cornerRadius: 22))
         .fullScreenCover(item: $selectedMedia) { item in
             UnixgramMediaViewer(item: item)
