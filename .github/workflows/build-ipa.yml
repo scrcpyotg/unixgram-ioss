@@ -1,0 +1,181 @@
+name: Build IPA + TIPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Install build tools
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          brew list ldid >/dev/null 2>&1 || brew install ldid
+          xcodegen --version
+          ldid -v || true
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build unsigned arm64 device app
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          rm -rf build dist
+          mkdir -p build dist
+
+          xcodebuild \
+            -project UnixgramFork.xcodeproj \
+            -scheme UnixgramFork \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$PWD/build/DerivedData" \
+            ONLY_ACTIVE_ARCH=NO \
+            ARCHS=arm64 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            build | tee build/build.log
+
+      - name: Locate and validate app bundle
+        run: |
+          set -euo pipefail
+
+          APP_PATH="$(find "$PWD/build/DerivedData/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$APP_PATH"
+          test -f "$APP_PATH/Info.plist"
+
+          EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP_PATH/Info.plist")"
+          BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")"
+          VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")"
+          BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")"
+          MIN_IOS="$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP_PATH/Info.plist" || true)"
+
+          test -f "$APP_PATH/$EXECUTABLE"
+          test "$BUNDLE_ID" = "com.aeterna.unixgramfork"
+          test "$VERSION" = "0.37.2"
+          test "$BUILD" = "41"
+
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+          echo "APP_EXECUTABLE=$EXECUTABLE" >> "$GITHUB_ENV"
+
+          echo "Bundle ID: $BUNDLE_ID"
+          echo "Version: $VERSION ($BUILD)"
+          echo "Minimum iOS: $MIN_IOS"
+          file "$APP_PATH/$EXECUTABLE"
+          lipo -info "$APP_PATH/$EXECUTABLE"
+
+      - name: Sanitize common app bundle
+        run: |
+          set -euo pipefail
+
+          # The normal IPA is intentionally unsigned so Sideloadly/3uTools can
+          # apply the user's own signing identity without stale signatures.
+          rm -rf "$APP_PATH/_CodeSignature"
+          rm -f "$APP_PATH/embedded.mobileprovision"
+          find "$APP_PATH" -type d -name _CodeSignature -prune -exec rm -rf {} + || true
+          find "$APP_PATH" -name embedded.mobileprovision -delete || true
+          find "$APP_PATH" -name .DS_Store -delete || true
+          xattr -cr "$APP_PATH" || true
+
+      - name: Package unsigned IPA for Sideloadly
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/ipa/Payload
+          cp -R "$APP_PATH" dist/ipa/Payload/
+          xattr -cr dist/ipa/Payload || true
+
+          (cd dist/ipa && /usr/bin/ditto -c -k --keepParent Payload ../Unixgram-v0.37.2.ipa)
+
+          unzip -t dist/Unixgram-v0.37.2.ipa
+          echo "---- IPA CONTENTS ----"
+          unzip -l dist/Unixgram-v0.37.2.ipa | head -80
+
+      - name: Prepare TrollStore TIPA
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/tipa/Payload
+          cp -R "$APP_PATH" dist/tipa/Payload/
+          TIPA_APP="$(find "$PWD/dist/tipa/Payload" -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$TIPA_APP"
+          TIPA_EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$TIPA_APP/Info.plist")"
+
+          # Give TrollStore a deterministic, sandboxed entitlement set instead
+          # of relying on its fallback get-task-allow entitlement. TrollStore
+          # preserves pre-applied ldid entitlements when it resigns the app.
+          ldid -Sci/UnixgramFork-TrollStore.entitlements "$TIPA_APP/$TIPA_EXECUTABLE"
+
+          echo "---- TIPA PRE-APPLIED ENTITLEMENTS ----"
+          ldid -e "$TIPA_APP/$TIPA_EXECUTABLE"
+
+          xattr -cr "$TIPA_APP" || true
+          (cd dist/tipa && /usr/bin/ditto -c -k --keepParent Payload ../Unixgram-v0.37.2.tipa)
+
+          unzip -t dist/Unixgram-v0.37.2.tipa
+          echo "---- TIPA CONTENTS ----"
+          unzip -l dist/Unixgram-v0.37.2.tipa | head -80
+
+      - name: Verify IPA and TIPA package identity
+        run: |
+          set -euo pipefail
+          rm -rf build/verify-ipa build/verify-tipa
+          mkdir -p build/verify-ipa build/verify-tipa
+          unzip -q dist/Unixgram-v0.37.2.ipa -d build/verify-ipa
+          unzip -q dist/Unixgram-v0.37.2.tipa -d build/verify-tipa
+
+          IPA_APP="$(find build/verify-ipa/Payload -maxdepth 1 -name '*.app' -print -quit)"
+          TIPA_APP="$(find build/verify-tipa/Payload -maxdepth 1 -name '*.app' -print -quit)"
+          test -n "$IPA_APP"
+          test -n "$TIPA_APP"
+
+          IPA_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$IPA_APP/Info.plist")"
+          TIPA_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$TIPA_APP/Info.plist")"
+          IPA_VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$IPA_APP/Info.plist")"
+          TIPA_VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$TIPA_APP/Info.plist")"
+
+          test "$IPA_ID" = "$TIPA_ID"
+          test "$IPA_VER" = "$TIPA_VER"
+          test "$IPA_ID" = "com.aeterna.unixgramfork"
+          test "$IPA_VER" = "0.37.2"
+
+          echo "IPA and TIPA bundle metadata match: $IPA_ID v$IPA_VER"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Unixgram-v0.37.2-IPA-Sideloadly
+          path: dist/Unixgram-v0.37.2.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload TIPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Unixgram-v0.37.2-TIPA-TrollStore
+          path: dist/Unixgram-v0.37.2.tipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcode-build-log-v0.37.2
+          path: |
+            build/build.log
+            ci/UnixgramFork-TrollStore.entitlements
+          if-no-files-found: ignore
+          retention-days: 14
