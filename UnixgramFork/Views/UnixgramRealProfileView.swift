@@ -43,6 +43,13 @@ struct UnixgramRealProfileView: View {
         isOwnProfile ? liveSession.currentUser : nil
     }
 
+    private var premiumAccent: Color? {
+        UnixgramPremiumPalette.accent(
+            premium: content.profile?.premium,
+            palette: content.profile?.profilePalette
+        )
+    }
+
     var body: some View {
         Group {
             if content.profile != nil || fallbackAccount != nil {
@@ -147,6 +154,7 @@ struct UnixgramRealProfileView: View {
         let profile = content.profile
         let displayName = profile?.displayName ?? account?.displayName ?? account?.username ?? targetUsername
         let handle = profile?.username ?? account?.username ?? targetUsername
+        let accent = premiumAccent
 
         return VStack(spacing: 0) {
             ZStack(alignment: .top) {
@@ -167,6 +175,7 @@ struct UnixgramRealProfileView: View {
                     VStack(alignment: .center, spacing: 2) {
                         Text(displayName)
                             .font(.system(size: 20, weight: .bold))
+                            .foregroundStyle(accent ?? Color.white)
                             .lineLimit(1)
                         Text("\(profile?.postsCount ?? content.posts.count) постов")
                             .font(.caption)
@@ -189,6 +198,10 @@ struct UnixgramRealProfileView: View {
                     .frame(width: 120, height: 120)
                     .clipShape(Circle())
                     .overlay(Circle().stroke(.black, lineWidth: 4))
+                    .overlay(
+                        Circle()
+                            .stroke(accent?.opacity(0.78) ?? Color.clear, lineWidth: accent == nil ? 0 : 2)
+                    )
                     .offset(y: -59)
 
                     Spacer(minLength: 8)
@@ -200,6 +213,7 @@ struct UnixgramRealProfileView: View {
                 HStack(spacing: 7) {
                     Text(displayName)
                         .font(.system(size: 27, weight: .bold))
+                        .foregroundStyle(accent ?? Color.white)
 
                     if let badge = profile?.verificationBadge ?? account?.verificationBadge,
                        badge != "NONE" {
@@ -209,7 +223,7 @@ struct UnixgramRealProfileView: View {
 
                     if profile?.premium == true || account?.premium == true {
                         Image(systemName: "sparkles")
-                            .foregroundStyle(.purple)
+                            .foregroundStyle(accent ?? Color.purple)
                     }
 
                     if let number = profile?.registrationNumber ?? account?.registrationNumber {
@@ -249,7 +263,7 @@ struct UnixgramRealProfileView: View {
                             .foregroundStyle(.secondary)
                         +
                         Text(aliases.map { "@\($0)" }.joined(separator: ", "))
-                            .foregroundStyle(.blue)
+                            .foregroundStyle(accent ?? Color.blue)
                     )
                     .font(.system(size: 16))
                 }
@@ -334,10 +348,16 @@ struct UnixgramRealProfileView: View {
                 showSettings = true
             }
             .font(.system(size: 17, weight: .bold))
+            .foregroundStyle(premiumAccent ?? Color.white)
             .padding(.horizontal, 18)
             .frame(height: 44)
             .background(Color.black)
-            .overlay(Capsule().stroke(Color.white.opacity(0.14)))
+            .overlay(
+                Capsule().stroke(
+                    premiumAccent?.opacity(0.55) ?? Color.white.opacity(0.14),
+                    lineWidth: 1
+                )
+            )
             .clipShape(Capsule())
 
             Button {
@@ -393,17 +413,19 @@ struct UnixgramRealProfileView: View {
     }
 
     private func profileActionIcon(_ icon: String, purple: Bool = false) -> some View {
-        Image(systemName: icon)
+        let accent = premiumAccent ?? Color(red: 0.80, green: 0.56, blue: 1.0)
+
+        return Image(systemName: icon)
             .font(.system(size: 18, weight: .semibold))
-            .foregroundStyle(purple ? Color(red: 0.80, green: 0.56, blue: 1.0) : Color.white)
+            .foregroundStyle(purple ? accent : Color.white)
             .frame(width: 42, height: 42)
             .background(
                 Circle()
-                    .fill(purple ? Color.purple.opacity(0.14) : Color.black.opacity(0.58))
+                    .fill(purple ? accent.opacity(0.14) : Color.black.opacity(0.58))
             )
             .overlay(
                 Circle()
-                    .stroke(purple ? Color.purple.opacity(0.50) : Color.white.opacity(0.12), lineWidth: 1)
+                    .stroke(purple ? accent.opacity(0.50) : Color.white.opacity(0.12), lineWidth: 1)
             )
     }
 
@@ -420,10 +442,10 @@ struct UnixgramRealProfileView: View {
                                     .lineLimit(1)
                             }
                             .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(premiumAccent ?? Color.white)
                             .padding(.horizontal, 10)
                             .frame(height: 32)
-                            .background(Color.white.opacity(0.06))
+                            .background((premiumAccent ?? Color.white).opacity(premiumAccent == nil ? 0.06 : 0.10))
                             .clipShape(Capsule())
                         }
                     }
@@ -453,10 +475,14 @@ struct UnixgramRealProfileView: View {
                                 }
                             }
                             .font(.system(size: 15, weight: selectedTab == tab ? .bold : .regular))
-                            .foregroundStyle(selectedTab == tab ? Color.white : Color.secondary)
+                            .foregroundStyle(
+                                selectedTab == tab
+                                    ? (premiumAccent ?? Color.white)
+                                    : Color.secondary
+                            )
 
                             Capsule()
-                                .fill(selectedTab == tab ? Color.blue : Color.clear)
+                                .fill(selectedTab == tab ? (premiumAccent ?? Color.blue) : Color.clear)
                                 .frame(height: 3)
                                 .padding(.horizontal, 10)
                         }
@@ -700,7 +726,7 @@ struct UnixgramRealProfileView: View {
         HStack(spacing: 5) {
             Text("\(value ?? 0)")
                 .font(.system(size: 17, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(premiumAccent ?? Color.white)
             Text(title)
                 .font(.system(size: 16))
                 .foregroundStyle(.secondary)
