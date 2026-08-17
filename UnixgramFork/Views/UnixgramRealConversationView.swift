@@ -94,6 +94,13 @@ struct UnixgramRealConversationView: View {
         .frame(height: 64)
     }
 
+    private var peerAccent: Color? {
+        UnixgramPremiumPalette.accent(
+            premium: detail?.peer?.premium,
+            palette: detail?.peer?.profilePalette
+        )
+    }
+
     private var peerHeaderContent: some View {
         HStack(spacing: 12) {
             AsyncImage(url: URL(string: detail?.peer?.avatarUrl ?? "")) { phase in
@@ -108,9 +115,18 @@ struct UnixgramRealConversationView: View {
             .clipShape(Circle())
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(detail?.peer?.displayName ?? detail?.peer?.username ?? "Unixgram")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(.white)
+                HStack(spacing: 5) {
+                    Text(detail?.peer?.displayName ?? detail?.peer?.username ?? "Unixgram")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(peerAccent ?? Color.white)
+
+                    if detail?.peer?.premium == true {
+                        Image(systemName: "sparkles")
+                            .font(.caption)
+                            .foregroundStyle(peerAccent ?? Color.purple)
+                    }
+                }
+
                 Text(detail?.peer?.username.map { "@\($0)" } ?? "")
                     .font(.caption)
                     .foregroundStyle(.secondary)
