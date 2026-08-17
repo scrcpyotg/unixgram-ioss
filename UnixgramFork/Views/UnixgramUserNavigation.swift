@@ -156,6 +156,12 @@ struct UnixgramConnectionsView: View {
                 HStack(spacing: 5) {
                     Text(user.displayName ?? user.username ?? "Unixgram")
                         .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(
+                            UnixgramPremiumPalette.accent(
+                                premium: user.premium,
+                                palette: user.profilePalette
+                            ) ?? Color.primary
+                        )
 
                     if let badge = user.verificationBadge, badge != "NONE" {
                         Image(systemName: "checkmark.seal.fill")
@@ -166,7 +172,12 @@ struct UnixgramConnectionsView: View {
                     if user.premium == true {
                         Image(systemName: "sparkles")
                             .font(.caption)
-                            .foregroundStyle(.purple)
+                            .foregroundStyle(
+                                UnixgramPremiumPalette.accent(
+                                    premium: user.premium,
+                                    palette: user.profilePalette
+                                ) ?? Color.purple
+                            )
                     }
                 }
 
