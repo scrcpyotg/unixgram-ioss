@@ -20,32 +20,82 @@ actor UnixgramRealAPIClient {
         session = URLSession(configuration: config)
     }
 
-    // Copies the authenticated Unixgram web session from WKWebView to URLSession.
+    // Restores and synchronizes the authenticated Unixgram session between WebKit,
+    // URLSession and the Keychain-backed cookie vault. This keeps session-only auth
+    // cookies alive even after iOS fully terminates the app process.
     @MainActor
     func importWebKitCookies() async {
-        let cookies = await WKWebsiteDataStore.default().httpCookieStore.allCookies()
+        let webStore = WKWebsiteDataStore.default().httpCookieStore
+        let webCookies = await webStore.allCookies()
+            .filter(Self.isUnixgramCookie)
+        let nativeCookies = (HTTPCookieStorage.shared.cookies ?? [])
+            .filter(Self.isUnixgramCookie)
+        let persistedCookies = UnixgramSessionCookieVault.load()
+            .filter(Self.isUnixgramCookie)
 
-        // CSRF tokens are bound to the active authenticated web session. When the
-        // WKWebView session changes (login, account switch, session refresh), a token
-        // cached by the native URLSession can become invalid even though /api/auth/me
-        // still succeeds. Reset the cached token whenever we synchronize cookies.
         await resetCSRFToken()
 
-        // Keep URLSession in sync with the persistent WKWebView session. Remove stale
-        // Unixgram cookies first so old and new auth cookies are never sent together.
-        if let storedCookies = HTTPCookieStorage.shared.cookies {
-            for cookie in storedCookies where cookie.domain.contains("unixgram.com") {
+        var merged: [String: HTTPCookie] = [:]
+        for cookie in persistedCookies { merged[Self.cookieKey(cookie)] = cookie }
+        for cookie in nativeCookies { merged[Self.cookieKey(cookie)] = cookie }
+        // The live WebKit cookie wins when the same cookie exists in more than one store.
+        for cookie in webCookies { merged[Self.cookieKey(cookie)] = cookie }
+
+        let validCookies = merged.values.filter { cookie in
+            guard let expires = cookie.expiresDate else { return true }
+            return expires > Date()
+        }
+
+        for cookie in validCookies {
+            HTTPCookieStorage.shared.setCookie(cookie)
+        }
+
+        let webKeys = Set(webCookies.map(Self.cookieKey))
+        for cookie in validCookies where !webKeys.contains(Self.cookieKey(cookie)) {
+            await webStore.setCookieAsync(cookie)
+        }
+
+        if !validCookies.isEmpty {
+            UnixgramSessionCookieVault.save(validCookies)
+        }
+    }
+
+    /// Clears every local representation of the Unixgram session. Call this only for
+    /// explicit logout or a server-confirmed 401.
+    @MainActor
+    func clearPersistedSession() async {
+        await resetCSRFToken()
+        UnixgramSessionCookieVault.clear()
+
+        if let cookies = HTTPCookieStorage.shared.cookies {
+            for cookie in cookies where Self.isUnixgramCookie(cookie) {
                 HTTPCookieStorage.shared.deleteCookie(cookie)
             }
         }
 
-        for cookie in cookies where cookie.domain.contains("unixgram.com") {
-            HTTPCookieStorage.shared.setCookie(cookie)
+        let webStore = WKWebsiteDataStore.default().httpCookieStore
+        let webCookies = await webStore.allCookies()
+        for cookie in webCookies where Self.isUnixgramCookie(cookie) {
+            await webStore.deleteCookieAsync(cookie)
         }
     }
 
     private func resetCSRFToken() {
         csrfToken = nil
+    }
+
+    private static func isUnixgramCookie(_ cookie: HTTPCookie) -> Bool {
+        cookie.domain.lowercased().contains("unixgram.com")
+    }
+
+    private static func cookieKey(_ cookie: HTTPCookie) -> String {
+        "\(cookie.name.lowercased())|\(cookie.domain.lowercased())|\(cookie.path)"
+    }
+
+    private func persistCurrentSessionCookies() {
+        let cookies = (HTTPCookieStorage.shared.cookies ?? []).filter(Self.isUnixgramCookie)
+        guard !cookies.isEmpty else { return }
+        UnixgramSessionCookieVault.save(cookies)
     }
 
     func bootstrapCSRF() async throws {
@@ -886,6 +936,10 @@ actor UnixgramRealAPIClient {
             throw URLError(.badServerResponse)
         }
 
+        if (200..<400).contains(http.statusCode) {
+            persistCurrentSessionCookies()
+        }
+
         if http.statusCode == 401 {
             throw UnixgramClientError.notAuthenticated
         }
@@ -966,6 +1020,18 @@ private extension WKHTTPCookieStore {
     func allCookies() async -> [HTTPCookie] {
         await withCheckedContinuation { continuation in
             getAllCookies { continuation.resume(returning: $0) }
+        }
+    }
+
+    func setCookieAsync(_ cookie: HTTPCookie) async {
+        await withCheckedContinuation { continuation in
+            setCookie(cookie) { continuation.resume() }
+        }
+    }
+
+    func deleteCookieAsync(_ cookie: HTTPCookie) async {
+        await withCheckedContinuation { continuation in
+            delete(cookie) { continuation.resume() }
         }
     }
 }

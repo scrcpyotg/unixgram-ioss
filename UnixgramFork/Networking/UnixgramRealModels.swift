@@ -100,6 +100,7 @@ struct UGUserMini: Decodable, Identifiable {
     let emojiStatus: String?
     let profilePalette: String?
     let verificationBadge: String?
+    let statusGift: UGProfileGift?
 }
 
 struct UGLastMessage: Decodable, Identifiable {
@@ -135,6 +136,7 @@ struct UGPeer: Decodable, Identifiable {
     let emojiStatus: String?
     let profilePalette: String?
     let verificationBadge: String?
+    let statusGift: UGProfileGift?
 }
 
 struct UGMessageDTO: Decodable, Identifiable {
@@ -535,6 +537,7 @@ struct UGHARFeedAuthor: Decodable, Identifiable {
     let emojiStatus: String?
     let profilePalette: String?
     let badges: [UGJSONValue]?
+    let statusGift: UGProfileGift?
 }
 
 struct UGHARMusic: Decodable {
@@ -628,7 +631,37 @@ struct UGPublicProfile: Decodable, Identifiable {
     let streak: UGProfileStreak?
     let links: [UGProfileLink]?
     let channels: [UGProfileChannel]?
+    let statusGift: UGProfileGift?
     let giftShowcase: [UGProfileGift]?
+    let profileViews: UGProfileViews?
+}
+
+struct UGProfileViews: Decodable, Hashable {
+    let totalCount: Int?
+    let lastViewer: UGProfileViewUser?
+}
+
+struct UGProfileViewUser: Decodable, Identifiable, Hashable {
+    let rawID: String?
+    let username: String?
+    let displayName: String?
+    let avatarUrl: String?
+
+    var id: String {
+        rawID ?? username?.lowercased() ?? avatarUrl ?? displayName ?? "unknown-profile-viewer"
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case rawID = "id"
+        case username, displayName, avatarUrl
+    }
+
+    init(rawID: String?, username: String?, displayName: String?, avatarUrl: String?) {
+        self.rawID = rawID
+        self.username = username
+        self.displayName = displayName
+        self.avatarUrl = avatarUrl
+    }
 }
 
 struct UGProfileStreak: Decodable, Hashable {

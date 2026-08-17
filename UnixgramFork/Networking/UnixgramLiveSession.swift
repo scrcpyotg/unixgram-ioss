@@ -71,6 +71,7 @@ final class UnixgramLiveSession: ObservableObject {
                 // Only a confirmed HTTP 401 is allowed to destroy the local signed-in
                 // state. Network failures, cancelled refreshes and Cloudflare pages must
                 // never throw the user back to the authorization screen.
+                await UnixgramRealAPIClient.shared.clearPersistedSession()
                 clearCachedAccount()
                 currentUser = nil
                 isAuthenticated = false
@@ -102,6 +103,10 @@ final class UnixgramLiveSession: ObservableObject {
         launchState = .signedOut
         lastError = nil
         showNotice(nil, autoHideAfter: nil)
+
+        Task {
+            await UnixgramRealAPIClient.shared.clearPersistedSession()
+        }
     }
 
     func showRefreshingNotice() {
