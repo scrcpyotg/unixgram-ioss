@@ -72,6 +72,10 @@ struct UnixgramRealMessagesView: View {
                                 .foregroundStyle(peerAccent(conversation) ?? Color.primary)
                                 .lineLimit(1)
 
+                            if let gift = conversation.members?.first?.statusGift {
+                                UnixgramStatusGiftIcon(gift: gift, size: 18)
+                            }
+
                             Spacer()
 
                             if let date = conversation.lastMessage?.createdAt {

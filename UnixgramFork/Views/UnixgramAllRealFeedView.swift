@@ -449,6 +449,10 @@ struct HARFeedPostCard: View {
                                 .foregroundStyle(authorAccent ?? Color.purple)
                                 .font(.caption)
                         }
+
+                        if let gift = post.author?.statusGift {
+                            UnixgramStatusGiftIcon(gift: gift, size: 20)
+                        }
                     }
 
                     HStack(spacing: 5) {

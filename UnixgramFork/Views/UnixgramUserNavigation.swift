@@ -179,6 +179,10 @@ struct UnixgramConnectionsView: View {
                                 ) ?? Color.purple
                             )
                     }
+
+                    if let gift = user.statusGift {
+                        UnixgramStatusGiftIcon(gift: gift, size: 19)
+                    }
                 }
 
                 if let handle = user.username, !handle.isEmpty {

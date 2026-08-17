@@ -15,6 +15,7 @@ struct UnixgramRealProfileView: View {
     @State private var selectedStory: UGProfileStory?
     @State private var selectedGift: UGProfileGift?
     @State private var showGiftMarket = false
+    @State private var showProfileViews = false
 
     init(username: String? = nil) {
         let normalized = username?
@@ -110,6 +111,11 @@ struct UnixgramRealProfileView: View {
                 .presentationDetents([.medium, .large])
                 .presentationCornerRadius(28)
         }
+        .sheet(isPresented: $showProfileViews) {
+            UnixgramProfileViewsSheet(summary: content.profile?.profileViews)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
         .fullScreenCover(isPresented: $showGiftMarket) {
             UnixgramGiftMarketView(username: username)
         }
@@ -173,17 +179,28 @@ struct UnixgramRealProfileView: View {
                     Spacer()
 
                     VStack(alignment: .center, spacing: 2) {
-                        Text(displayName)
-                            .font(.system(size: 20, weight: .bold))
-                            .foregroundStyle(accent ?? Color.white)
-                            .lineLimit(1)
+                        HStack(spacing: 5) {
+                            Text(displayName)
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundStyle(accent ?? Color.white)
+                                .lineLimit(1)
+
+                            if let gift = profile?.statusGift {
+                                statusGiftButton(gift, size: 21)
+                            }
+                        }
                         Text("\(profile?.postsCount ?? content.posts.count) постов")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
 
                     Spacer()
-                    circleActionButton("qrcode") {}
+                    HStack(spacing: 8) {
+                        if isOwnProfile {
+                            profileViewsButton(profile?.profileViews)
+                        }
+                        circleActionButton("qrcode") {}
+                    }
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 15)
@@ -224,6 +241,10 @@ struct UnixgramRealProfileView: View {
                     if profile?.premium == true || account?.premium == true {
                         Image(systemName: "sparkles")
                             .foregroundStyle(accent ?? Color.purple)
+                    }
+
+                    if let gift = profile?.statusGift {
+                        statusGiftButton(gift, size: 27)
                     }
 
                     if let number = profile?.registrationNumber ?? account?.registrationNumber {
@@ -740,6 +761,64 @@ struct UnixgramRealProfileView: View {
         }
         .font(.system(size: 15))
         .foregroundStyle(.secondary)
+    }
+
+    private func profileViewsButton(_ views: UGProfileViews?) -> some View {
+        Button {
+            showProfileViews = true
+        } label: {
+            ZStack(alignment: .bottomTrailing) {
+                Group {
+                    if let raw = views?.lastViewer?.avatarUrl, let url = URL(string: raw) {
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .success(let image): image.resizable().scaledToFill()
+                            default:
+                                Circle()
+                                    .fill(Color.black.opacity(0.58))
+                                    .overlay(Image(systemName: "eye.fill"))
+                            }
+                        }
+                    } else {
+                        Circle()
+                            .fill(Color.black.opacity(0.58))
+                            .overlay(Image(systemName: "eye.fill"))
+                    }
+                }
+                .frame(width: 42, height: 42)
+                .clipShape(Circle())
+                .overlay(Circle().stroke(Color.white.opacity(0.14), lineWidth: 1))
+
+                if let count = views?.totalCount, count > 0 {
+                    Text(compactProfileViewCount(count))
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .frame(minWidth: 22, minHeight: 18)
+                        .background(Color.blue)
+                        .clipShape(Capsule())
+                        .overlay(Capsule().stroke(Color.black, lineWidth: 2))
+                        .offset(x: 4, y: 3)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Кто смотрел профиль")
+    }
+
+    private func statusGiftButton(_ gift: UGProfileGift, size: CGFloat) -> some View {
+        Button {
+            selectedGift = gift
+        } label: {
+            UnixgramStatusGiftIcon(gift: gift, size: size)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func compactProfileViewCount(_ count: Int) -> String {
+        if count >= 1_000_000 { return String(format: "%.1fM", Double(count) / 1_000_000).replacingOccurrences(of: ".0", with: "") }
+        if count >= 1_000 { return String(format: "%.1fK", Double(count) / 1_000).replacingOccurrences(of: ".0", with: "") }
+        return String(count)
     }
 
     private func circleActionButton(_ icon: String, action: @escaping () -> Void) -> some View {

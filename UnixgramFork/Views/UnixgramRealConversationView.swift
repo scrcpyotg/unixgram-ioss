@@ -125,6 +125,10 @@ struct UnixgramRealConversationView: View {
                             .font(.caption)
                             .foregroundStyle(peerAccent ?? Color.purple)
                     }
+
+                    if let gift = detail?.peer?.statusGift {
+                        UnixgramStatusGiftIcon(gift: gift, size: 19)
+                    }
                 }
 
                 Text(detail?.peer?.username.map { "@\($0)" } ?? "")

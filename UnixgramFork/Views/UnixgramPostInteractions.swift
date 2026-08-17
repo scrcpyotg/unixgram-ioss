@@ -537,6 +537,21 @@ struct UnixgramCommentsView: View {
                             .foregroundStyle(.cyan)
                     }
 
+                    if comment.author.premium == true {
+                        Image(systemName: "sparkles")
+                            .font(.caption2)
+                            .foregroundStyle(
+                                UnixgramPremiumPalette.accent(
+                                    premium: comment.author.premium,
+                                    palette: comment.author.profilePalette
+                                ) ?? Color.purple
+                            )
+                    }
+
+                    if let gift = comment.author.statusGift {
+                        UnixgramStatusGiftIcon(gift: gift, size: isReply ? 17 : 19)
+                    }
+
                     Spacer()
 
                     if let createdAt = comment.createdAt {
