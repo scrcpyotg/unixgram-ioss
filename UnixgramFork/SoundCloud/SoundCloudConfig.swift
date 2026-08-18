@@ -11,13 +11,17 @@ enum SoundCloudConfig {
     ///
     /// A UserDefaults override is intentionally supported so a test build can
     /// point at a freshly deployed broker without recompiling the whole app.
+    private static let defaultBrokerURL = URL(
+        string: "https://zlxofgtupzajymwdomdy.supabase.co/functions/v1/soundcloud-oauth"
+    )!
+
     static var brokerBaseURL: URL? {
         if let raw = UserDefaults.standard.string(forKey: "unixgram.soundcloud.brokerURL"),
            let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
            url.scheme?.lowercased() == "https" {
             return url
         }
-        return nil
+        return defaultBrokerURL
     }
 
     static func setBrokerBaseURL(_ raw: String) {
