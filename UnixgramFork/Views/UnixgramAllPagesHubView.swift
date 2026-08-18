@@ -12,6 +12,14 @@ struct UnixgramAllPagesHubView: View {
                 NavigationLink("Профиль и настройки") { UnixgramRealProfileView() }
             }
 
+            Section("Музыка") {
+                NavigationLink {
+                    SoundCloudNativeView()
+                } label: {
+                    Label("SoundCloud", systemImage: "waveform")
+                }
+            }
+
             Section("Дополнительные страницы") {
                 NavigationLink("Stories") { UnixgramAllRealStoriesView() }
                 NavigationLink("Stars / подарки") { UnixgramAllRealStarsView() }
