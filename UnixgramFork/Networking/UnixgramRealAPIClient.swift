@@ -9,6 +9,12 @@ actor UnixgramRealAPIClient {
 
     private let session: URLSession
     private var csrfToken: String?
+    private var csrfIssuedAt: Date?
+    private var csrfCookieFingerprint: String?
+
+    /// CSRF is deliberately treated as short-lived even if the server does not expose
+    /// an explicit expiry. This avoids holding a token across session/cookie rotations.
+    private let csrfSoftTTL: TimeInterval = 90
 
     init() {
         let config = URLSessionConfiguration.default
@@ -35,23 +41,34 @@ actor UnixgramRealAPIClient {
 
         await resetCSRFToken()
 
+        // Canonicalize cookie identity so `.unixgram.com` and `unixgram.com` cannot
+        // survive as two competing cookies with the same name/path. Persisted cookies
+        // are the fallback, native cookies are newer in-process state, and the current
+        // WebKit login wins on bootstrap.
         var merged: [String: HTTPCookie] = [:]
         for cookie in persistedCookies { merged[Self.cookieKey(cookie)] = cookie }
         for cookie in nativeCookies { merged[Self.cookieKey(cookie)] = cookie }
-        // The live WebKit cookie wins when the same cookie exists in more than one store.
         for cookie in webCookies { merged[Self.cookieKey(cookie)] = cookie }
 
-        let validCookies = merged.values.filter { cookie in
-            guard let expires = cookie.expiresDate else { return true }
-            return expires > Date()
+        let validCookies = merged.values
+            .filter { cookie in
+                guard let expires = cookie.expiresDate else { return true }
+                return expires > Date()
+            }
+            .sorted { Self.cookieKey($0) < Self.cookieKey($1) }
+
+        // Remove stale/duplicate Unixgram cookies before installing one canonical set.
+        if let allNative = HTTPCookieStorage.shared.cookies {
+            for cookie in allNative where Self.isUnixgramCookie(cookie) {
+                HTTPCookieStorage.shared.deleteCookie(cookie)
+            }
+        }
+        for cookie in webCookies {
+            await webStore.deleteCookieAsync(cookie)
         }
 
         for cookie in validCookies {
             HTTPCookieStorage.shared.setCookie(cookie)
-        }
-
-        let webKeys = Set(webCookies.map(Self.cookieKey))
-        for cookie in validCookies where !webKeys.contains(Self.cookieKey(cookie)) {
             await webStore.setCookieAsync(cookie)
         }
 
@@ -82,29 +99,113 @@ actor UnixgramRealAPIClient {
 
     private func resetCSRFToken() {
         csrfToken = nil
+        csrfIssuedAt = nil
+        csrfCookieFingerprint = nil
     }
 
     private static func isUnixgramCookie(_ cookie: HTTPCookie) -> Bool {
         cookie.domain.lowercased().contains("unixgram.com")
     }
 
+    private static func normalizedCookieDomain(_ domain: String) -> String {
+        domain
+            .lowercased()
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+    }
+
     private static func cookieKey(_ cookie: HTTPCookie) -> String {
-        "\(cookie.name.lowercased())|\(cookie.domain.lowercased())|\(cookie.path)"
+        "\(cookie.name.lowercased())|\(normalizedCookieDomain(cookie.domain))|\(cookie.path)"
+    }
+
+    private func currentCookieFingerprint() -> String {
+        (HTTPCookieStorage.shared.cookies ?? [])
+            .filter(Self.isUnixgramCookie)
+            .filter { cookie in
+                guard let expires = cookie.expiresDate else { return true }
+                return expires > Date()
+            }
+            .map { "\(Self.cookieKey($0))=\($0.value)" }
+            .sorted()
+            .joined(separator: "\n")
+    }
+
+    /// URLSession can receive a refreshed host-only cookie while a domain cookie with
+    /// the same name is still present. Keep one canonical cookie per name/domain/path
+    /// so the server never sees two conflicting session/CSRF values.
+    private func canonicalizeNativeCookies() {
+        let storage = HTTPCookieStorage.shared
+        let cookies = (storage.cookies ?? []).filter(Self.isUnixgramCookie)
+        guard !cookies.isEmpty else { return }
+
+        var merged: [String: HTTPCookie] = [:]
+        for cookie in cookies {
+            let key = Self.cookieKey(cookie)
+            if let current = merged[key] {
+                let currentExpiry = current.expiresDate ?? .distantFuture
+                let candidateExpiry = cookie.expiresDate ?? .distantFuture
+
+                if candidateExpiry > currentExpiry ||
+                    (candidateExpiry == currentExpiry &&
+                     !cookie.domain.hasPrefix(".") &&
+                     current.domain.hasPrefix(".")) {
+                    merged[key] = cookie
+                }
+            } else {
+                merged[key] = cookie
+            }
+        }
+
+        guard merged.count != cookies.count else { return }
+        for cookie in cookies { storage.deleteCookie(cookie) }
+        for cookie in merged.values { storage.setCookie(cookie) }
     }
 
     private func persistCurrentSessionCookies() {
+        canonicalizeNativeCookies()
         let cookies = (HTTPCookieStorage.shared.cookies ?? []).filter(Self.isUnixgramCookie)
         guard !cookies.isEmpty else { return }
         UnixgramSessionCookieVault.save(cookies)
     }
 
-    func bootstrapCSRF() async throws {
+    private var csrfNeedsRefresh: Bool {
+        guard csrfToken != nil,
+              let issuedAt = csrfIssuedAt
+        else { return true }
+
+        if Date().timeIntervalSince(issuedAt) >= csrfSoftTTL {
+            return true
+        }
+
+        if let csrfCookieFingerprint,
+           csrfCookieFingerprint != currentCookieFingerprint() {
+            return true
+        }
+
+        return false
+    }
+
+    func bootstrapCSRF(force: Bool = false) async throws {
+        if !force, !csrfNeedsRefresh {
+            return
+        }
+
+        resetCSRFToken()
+        canonicalizeNativeCookies()
+
+        // A cache-buster complements URLSession's reloadIgnoringLocalCacheData and
+        // prevents intermediary/CDN caches from ever handing the client an old token.
+        let nonce = Int(Date().timeIntervalSince1970 * 1_000)
         let response: UGCSRFResponse = try await request(
-            path: "/api/auth/csrf",
+            path: "/api/auth/csrf?_=\(nonce)",
             method: "GET",
             requiresCSRF: false
         )
+
+        canonicalizeNativeCookies()
         csrfToken = response.csrfToken
+        csrfIssuedAt = Date()
+        csrfCookieFingerprint = currentCookieFingerprint()
+        persistCurrentSessionCookies()
     }
 
     func me() async throws -> UGCurrentAccount {
@@ -854,8 +955,8 @@ actor UnixgramRealAPIClient {
     }
 
     private func ensureCSRF() async throws {
-        if csrfToken == nil {
-            try await bootstrapCSRF()
+        if csrfNeedsRefresh {
+            try await bootstrapCSRF(force: true)
         }
     }
 
@@ -900,11 +1001,12 @@ actor UnixgramRealAPIClient {
         requiresCSRF: Bool = false,
         contentType: String = "application/json",
         refererPath: String? = nil,
-        allowCSRFRefreshRetry: Bool = true
+        csrfRefreshAttemptsRemaining: Int = 2
     ) async throws -> T {
         // Keep every write safe even if an individual caller forgot to pre-bootstrap.
-        if requiresCSRF && csrfToken == nil {
-            try await bootstrapCSRF()
+        // Also proactively rotate a token that is old or belongs to a previous cookie set.
+        if requiresCSRF && csrfNeedsRefresh {
+            try await bootstrapCSRF(force: true)
         }
 
         guard let url = URL(string: pathWithQuery, relativeTo: baseURL) else {
@@ -938,6 +1040,14 @@ actor UnixgramRealAPIClient {
 
         if (200..<400).contains(http.statusCode) {
             persistCurrentSessionCookies()
+
+            // A mutation response may rotate an auth/session cookie. Do not keep using
+            // a CSRF token that was issued for the previous cookie set.
+            if requiresCSRF,
+               let csrfCookieFingerprint,
+               csrfCookieFingerprint != currentCookieFingerprint() {
+                resetCSRFToken()
+            }
         }
 
         if http.statusCode == 401 {
@@ -954,10 +1064,21 @@ actor UnixgramRealAPIClient {
         // behavior once so comments, likes, follows, messages, etc. self-heal instead
         // of surfacing `Invalid CSRF token` to the user.
         if requiresCSRF,
-           allowCSRFRefreshRetry,
+           csrfRefreshAttemptsRemaining > 0,
            isCSRFFailure(statusCode: http.statusCode, data: data) {
-            csrfToken = nil
-            try await bootstrapCSRF()
+            resetCSRFToken()
+
+            // First retry: refresh against the native cookie set that just performed the
+            // request. If the server still rejects it, second retry fully resynchronizes
+            // WebKit/native/Keychain cookies and then obtains another fresh token.
+            if csrfRefreshAttemptsRemaining == 1 {
+                await importWebKitCookies()
+            } else {
+                canonicalizeNativeCookies()
+            }
+
+            try await bootstrapCSRF(force: true)
+
             return try await request(
                 pathWithQuery: pathWithQuery,
                 method: method,
@@ -965,7 +1086,7 @@ actor UnixgramRealAPIClient {
                 requiresCSRF: true,
                 contentType: contentType,
                 refererPath: refererPath,
-                allowCSRFRefreshRetry: false
+                csrfRefreshAttemptsRemaining: csrfRefreshAttemptsRemaining - 1
             )
         }
 
