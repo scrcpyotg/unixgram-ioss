@@ -12,7 +12,20 @@ enum SoundCloudAPIError: LocalizedError {
         case .http(let status, let message):
             return message.isEmpty ? "SoundCloud HTTP \(status)." : message
         case .noPlayableStream:
-            return "Для этого трека SoundCloud не вернул доступный поток."
+            return "Этот трек SoundCloud не разрешает воспроизводить во внешнем приложении или для него доступен только ограниченный поток."
+        }
+    }
+}
+
+private extension SoundCloudAPIError {
+    var isRecoverableStreamLookupFailure: Bool {
+        switch self {
+        case .http(let status, _):
+            return status == 400 || status == 404
+        case .noPlayableStream:
+            return true
+        default:
+            return false
         }
     }
 }
@@ -45,6 +58,9 @@ final class SoundCloudAPIClient {
             path: "/me/likes/tracks",
             items: [
                 URLQueryItem(name: "limit", value: String(limit)),
+                // /me/likes/tracks defaults to playable, preview AND blocked.
+                // Do not offer tracks that SoundCloud explicitly blocks off-platform.
+                URLQueryItem(name: "access", value: "playable,preview"),
                 URLQueryItem(name: "linked_partitioning", value: "true")
             ],
             session: session
@@ -53,9 +69,11 @@ final class SoundCloudAPIClient {
     }
 
     func recentlyPlayed(session: SoundCloudSession) async throws -> [SoundCloudTrack] {
+        // SoundCloud explicitly documents that this endpoint is NOT paginated.
+        // `linked_partitioning` caused a 400 on the current API.
         let response: SoundCloudPaginatedTracks = try await get(
             path: "/me/recently-played/tracks",
-            items: [URLQueryItem(name: "linked_partitioning", value: "true")],
+            items: [URLQueryItem(name: "access", value: "playable,preview")],
             session: session
         )
         return response.collection
@@ -75,12 +93,46 @@ final class SoundCloudAPIClient {
     }
 
     func streamURL(for track: SoundCloudTrack, session: SoundCloudSession) async throws -> URL {
+        if track.access?.lowercased() == "blocked" {
+            throw SoundCloudAPIError.noPlayableStream
+        }
+
+        // Primary path from the current SoundCloud OpenAPI: track URN.
+        do {
+            if let url = try await officialStreamURL(identifier: track.resolvedURN, session: session) {
+                return url
+            }
+        } catch let error as SoundCloudAPIError {
+            guard error.isRecoverableStreamLookupFailure else { throw error }
+        }
+
+        // SoundCloud is in the middle of the id -> URN migration. Some stream backends
+        // still accept/expect the numeric id even when metadata already exposes a URN.
+        do {
+            if let url = try await officialStreamURL(identifier: String(track.id), session: session) {
+                return url
+            }
+        } catch let error as SoundCloudAPIError {
+            guard error.isRecoverableStreamLookupFailure else { throw error }
+        }
+
+        // Last-resort fallback for public tracks. This does not expose user cookies or
+        // OAuth tokens and uses the existing logged-out SoundCloud transport.
+        if track.access?.lowercased() != "blocked" {
+            if let url = try? await SoundCloudPublicClient.shared.streamURL(for: track) {
+                return url
+            }
+        }
+
+        throw SoundCloudAPIError.noPlayableStream
+    }
+
+    private func officialStreamURL(identifier: String, session: SoundCloudSession) async throws -> URL? {
         let streams: SoundCloudStreams = try await get(
-            path: "/tracks/\(track.resolvedURN.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? track.resolvedURN)/streams",
+            path: "/tracks/\(encoded(identifier))/streams",
             session: session
         )
-        guard let url = streams.preferredURL else { throw SoundCloudAPIError.noPlayableStream }
-        return url
+        return streams.preferredURL
     }
 
     func like(track: SoundCloudTrack, session: SoundCloudSession) async throws {
@@ -163,8 +215,10 @@ final class SoundCloudAPIClient {
         }
 
         guard (200..<300).contains(http.statusCode) else {
-            let body = String(data: data, encoding: .utf8) ?? ""
-            throw SoundCloudAPIError.http(http.statusCode, body)
+            throw SoundCloudAPIError.http(
+                http.statusCode,
+                readableAPIError(status: http.statusCode, data: data)
+            )
         }
 
         if T.self == EmptyResponse.self, data.isEmpty {
@@ -179,6 +233,18 @@ final class SoundCloudAPIClient {
             }
             throw error
         }
+    }
+
+    private func readableAPIError(status: Int, data: Data) -> String {
+        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let message = object["message"] as? String, !message.isEmpty {
+                return "SoundCloud: \(message)"
+            }
+            if let error = object["error"] as? String, !error.isEmpty {
+                return "SoundCloud: \(error)"
+            }
+        }
+        return "SoundCloud HTTP \(status). Не удалось выполнить запрос."
     }
 
     private struct EmptyResponse: Decodable {}
