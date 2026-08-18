@@ -16,6 +16,7 @@ final class SoundCloudNativeStore: ObservableObject {
     @Published var isLoading = false
     @Published var playingTrackID: Int?
     @Published var errorMessage: String?
+    @Published var playbackError: String?
 
     private let session = SoundCloudSession.shared
 
@@ -71,7 +72,7 @@ final class SoundCloudNativeStore: ObservableObject {
 
     func play(_ track: SoundCloudTrack) async {
         guard playingTrackID == nil else { return }
-        errorMessage = nil
+        playbackError = nil
         playingTrackID = track.id
         defer { playingTrackID = nil }
 
@@ -95,7 +96,8 @@ final class SoundCloudNativeStore: ObservableObject {
             )
             UnixgramMusicPlayer.shared.toggle(music)
         } catch {
-            errorMessage = error.localizedDescription
+            // A single unavailable track must not replace the whole SoundCloud screen.
+            playbackError = error.localizedDescription
         }
     }
 
@@ -114,6 +116,7 @@ final class SoundCloudNativeStore: ObservableObject {
 }
 
 struct SoundCloudNativeView: View {
+    @EnvironmentObject private var appSession: AppSession
     @StateObject private var session = SoundCloudSession.shared
     @StateObject private var store = SoundCloudNativeStore()
     @ObservedObject private var player = UnixgramMusicPlayer.shared
@@ -156,10 +159,34 @@ struct SoundCloudNativeView: View {
                 store.tracks = []
             }
         }
+        .alert(
+            "Не удалось воспроизвести",
+            isPresented: Binding(
+                get: { store.playbackError != nil },
+                set: { if !$0 { store.playbackError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(store.playbackError ?? "")
+        }
     }
 
     private var header: some View {
         HStack(spacing: 12) {
+            Button {
+                appSession.returnToFeed()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 38, height: 38)
+                    .background(Color.white.opacity(0.08))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Вернуться в ленту")
+
             Image(systemName: "waveform")
                 .font(.system(size: 22, weight: .bold))
                 .foregroundStyle(.orange)
