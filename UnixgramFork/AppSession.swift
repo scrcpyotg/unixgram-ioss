@@ -6,7 +6,14 @@ final class AppSession: ObservableObject {
     @Published var isAuthenticated: Bool = false // legacy UI compatibility only
     @Published var isConversationOpen: Bool = false
     @Published var pendingNotificationDeepLink: UnixgramNotificationDeepLink?
+    @Published var homeNavigationResetID = UUID()
     let api = APIClient.shared
+
+    func returnToFeed() {
+        pendingNotificationDeepLink = nil
+        homeNavigationResetID = UUID()
+        selectedTab = .home
+    }
 }
 
 enum UnixgramNotificationDeepLink: Equatable {

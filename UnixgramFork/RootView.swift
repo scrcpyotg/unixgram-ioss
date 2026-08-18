@@ -37,6 +37,7 @@ struct MainShellView: View {
                 switch session.selectedTab {
                 case .home:
                     NavigationStack { UnixgramAllRealFeedView() }
+                        .id(session.homeNavigationResetID)
                 case .discover:
                     NavigationStack { UnixgramAllRealDiscoverView() }
                 case .notifications:
