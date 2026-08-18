@@ -89,11 +89,30 @@ struct UnixgramAllRealFeedView: View {
     }
 
     private var homeHeader: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Text("Unixgram")
                 .font(.system(size: 27, weight: .bold))
 
-            Spacer()
+            Spacer(minLength: 8)
+
+            NavigationLink {
+                SoundCloudNativeView()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 15, weight: .bold))
+                    Text("SC")
+                        .font(.system(size: 13, weight: .bold))
+                }
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 11)
+                .frame(height: 38)
+                .background(Color.orange.opacity(0.12))
+                .overlay(Capsule().stroke(Color.orange.opacity(0.28), lineWidth: 1))
+                .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Открыть SoundCloud")
 
             NavigationLink {
                 UnixgramAllRealStarsView()
