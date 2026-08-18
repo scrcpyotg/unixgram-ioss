@@ -3,6 +3,14 @@ import SwiftUI
 struct FeatureHubView: View {
     var body: some View {
         List {
+            Section("SoundCloud") {
+                NavigationLink {
+                    SoundCloudNativeView()
+                } label: {
+                    Label("Нативный SoundCloud", systemImage: "waveform")
+                }
+            }
+
             Section("v0.16") {
                 NavigationLink {
                     UnixgramCreatePostView()
