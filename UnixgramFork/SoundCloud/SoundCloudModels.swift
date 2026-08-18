@@ -180,19 +180,30 @@ struct SoundCloudStreams: Codable {
     let httpMp3128URL: String?
     let hlsMp3128URL: String?
     let hlsAac160URL: String?
+    let hlsAac96URL: String?
     let hlsOpus64URL: String?
+    let previewMp3128URL: String?
 
     enum CodingKeys: String, CodingKey {
         case httpMp3128URL = "http_mp3_128_url"
         case hlsMp3128URL = "hls_mp3_128_url"
         case hlsAac160URL = "hls_aac_160_url"
+        case hlsAac96URL = "hls_aac_96_url"
         case hlsOpus64URL = "hls_opus_64_url"
+        case previewMp3128URL = "preview_mp3_128_url"
     }
 
     var preferredURL: URL? {
-        [hlsAac160URL, httpMp3128URL, hlsMp3128URL, hlsOpus64URL]
-            .compactMap { $0.flatMap(URL.init(string:)) }
-            .first
+        [
+            hlsAac160URL,
+            hlsAac96URL,
+            httpMp3128URL,
+            hlsMp3128URL,
+            hlsOpus64URL,
+            previewMp3128URL
+        ]
+        .compactMap { $0.flatMap(URL.init(string:)) }
+        .first
     }
 }
 
@@ -203,6 +214,20 @@ struct SoundCloudPaginatedTracks: Codable {
     enum CodingKeys: String, CodingKey {
         case collection
         case nextHref = "next_href"
+    }
+
+    init(from decoder: Decoder) throws {
+        // Most list endpoints return { collection, next_href } when pagination is enabled.
+        // /me/recently-played/tracks is explicitly non-paginated and may return an array.
+        if let array = try? decoder.singleValueContainer().decode([SoundCloudTrack].self) {
+            collection = array
+            nextHref = nil
+            return
+        }
+
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        collection = try container.decode([SoundCloudTrack].self, forKey: .collection)
+        nextHref = try container.decodeIfPresent(String.self, forKey: .nextHref)
     }
 }
 
