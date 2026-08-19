@@ -76,6 +76,20 @@ jobs:
           file "$APP_PATH/$EXECUTABLE"
           lipo -info "$APP_PATH/$EXECUTABLE"
 
+      - name: Enable background audio in final app Info.plist
+        run: |
+          set -euo pipefail
+
+          # UIBackgroundModes must be an ARRAY. Do not rely on generated-build-setting
+          # coercion because iOS ignores an incorrectly typed value.
+          /usr/libexec/PlistBuddy -c 'Delete :UIBackgroundModes' "$APP_PATH/Info.plist" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c 'Add :UIBackgroundModes array' "$APP_PATH/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Add :UIBackgroundModes:0 string audio' "$APP_PATH/Info.plist"
+
+          test "$(/usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes:0' "$APP_PATH/Info.plist")" = "audio"
+          echo "Background audio mode:"
+          /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' "$APP_PATH/Info.plist"
+
       - name: Sanitize common app bundle
         run: |
           set -euo pipefail
