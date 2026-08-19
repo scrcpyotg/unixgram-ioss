@@ -189,13 +189,13 @@ final class UnixgramMusicPlayer: ObservableObject {
                       ended === self.player.currentItem else { return }
                 self.currentTime = 0
                 if self.repeatMode == .one {
-                    self.player.seek(to: .zero)
+                    await self.player.seek(to: .zero)
                     self.userWantsPlayback = true
                     self.player.playImmediately(atRate: 1.0)
                 } else if self.canGoNext || self.repeatMode == .all {
                     await self.next()
                 } else {
-                    self.player.seek(to: .zero)
+                    await self.player.seek(to: .zero)
                     self.userWantsPlayback = false
                     self.isPlaying = false
                     self.updateNowPlaying()
