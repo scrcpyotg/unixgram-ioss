@@ -55,7 +55,9 @@ final class SoundCloudNativeStore: ObservableObject {
             return
         }
         await perform {
-            try await SoundCloudAPIClient.shared.likedTracks(session: self.session)
+            let result = try await SoundCloudAPIClient.shared.likedTracks(session: self.session)
+            UnixgramMusicPlayer.shared.markSoundCloudLikes(Set(result.map(\.id)))
+            return result
         }
     }
 
@@ -76,28 +78,9 @@ final class SoundCloudNativeStore: ObservableObject {
         playingTrackID = track.id
         defer { playingTrackID = nil }
 
-        do {
-            let streamURL: URL
-            if session.isConnected {
-                streamURL = try await SoundCloudAPIClient.shared.streamURL(for: track, session: session)
-            } else {
-                streamURL = try await SoundCloudPublicClient.shared.streamURL(for: track)
-            }
-
-            let music = UnixgramMusicTrack(
-                title: track.title,
-                artist: track.user?.username,
-                coverUrl: track.artworkURL,
-                previewUrl: streamURL.absoluteString,
-                externalUrl: track.permalinkURL,
-                durationMs: track.duration,
-                externalId: "soundcloud:\(track.id)",
-                provider: "SoundCloud"
-            )
-            UnixgramMusicPlayer.shared.toggle(music)
-        } catch {
-            // A single unavailable track must not replace the whole SoundCloud screen.
-            playbackError = error.localizedDescription
+        await UnixgramMusicPlayer.shared.playSoundCloud(track, queue: tracks)
+        if let error = UnixgramMusicPlayer.shared.errorMessage {
+            playbackError = error
         }
     }
 
@@ -116,12 +99,12 @@ final class SoundCloudNativeStore: ObservableObject {
 }
 
 struct SoundCloudNativeView: View {
-    @EnvironmentObject private var appSession: AppSession
     @StateObject private var session = SoundCloudSession.shared
     @StateObject private var store = SoundCloudNativeStore()
     @ObservedObject private var player = UnixgramMusicPlayer.shared
 
     @State private var showBrokerSetup = false
+    @State private var showNowPlaying = false
     @State private var brokerURLText = SoundCloudConfig.brokerBaseURL?.absoluteString ?? ""
 
     var body: some View {
@@ -150,6 +133,9 @@ struct SoundCloudNativeView: View {
         .sheet(isPresented: $showBrokerSetup) {
             brokerSetupSheet
         }
+        .fullScreenCover(isPresented: $showNowPlaying) {
+            UnixgramNowPlayingView()
+        }
         .onChange(of: store.selectedSection) {
             Task { await store.loadCurrentSection() }
         }
@@ -174,19 +160,6 @@ struct SoundCloudNativeView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Button {
-                appSession.returnToFeed()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 38, height: 38)
-                    .background(Color.white.opacity(0.08))
-                    .clipShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Вернуться в ленту")
-
             Image(systemName: "waveform")
                 .font(.system(size: 22, weight: .bold))
                 .foregroundStyle(.orange)
@@ -331,7 +304,11 @@ struct SoundCloudNativeView: View {
                         isCurrent: player.currentTrack?.id == "soundcloud:\(track.id)",
                         isPlaying: player.currentTrack?.id == "soundcloud:\(track.id)" && player.isPlaying
                     ) {
-                        Task { await store.play(track) }
+                        if player.currentTrack?.id == "soundcloud:\(track.id)" {
+                            showNowPlaying = true
+                        } else {
+                            Task { await store.play(track) }
+                        }
                     }
                 }
             }
