@@ -45,7 +45,7 @@ final class SoundCloudAPIClient {
     func searchTracks(_ query: String, session: SoundCloudSession, limit: Int = 30) async throws -> [SoundCloudTrack] {
         let params = [
             URLQueryItem(name: "q", value: query),
-            URLQueryItem(name: "access", value: "playable"),
+            URLQueryItem(name: "access", value: "playable,preview,blocked"),
             URLQueryItem(name: "limit", value: String(limit)),
             URLQueryItem(name: "linked_partitioning", value: "true")
         ]
@@ -58,9 +58,8 @@ final class SoundCloudAPIClient {
             path: "/me/likes/tracks",
             items: [
                 URLQueryItem(name: "limit", value: String(limit)),
-                // /me/likes/tracks defaults to playable, preview AND blocked.
-                // Do not offer tracks that SoundCloud explicitly blocks off-platform.
-                URLQueryItem(name: "access", value: "playable,preview"),
+                // Include the full catalog metadata. Restricted tracks fall back to the official SoundCloud Widget.
+                URLQueryItem(name: "access", value: "playable,preview,blocked"),
                 URLQueryItem(name: "linked_partitioning", value: "true")
             ],
             session: session
@@ -73,7 +72,7 @@ final class SoundCloudAPIClient {
         // `linked_partitioning` caused a 400 on the current API.
         let response: SoundCloudPaginatedTracks = try await get(
             path: "/me/recently-played/tracks",
-            items: [URLQueryItem(name: "access", value: "playable,preview")],
+            items: [URLQueryItem(name: "access", value: "playable,preview,blocked")],
             session: session
         )
         return response.collection
@@ -93,7 +92,7 @@ final class SoundCloudAPIClient {
     }
 
     func streamURL(for track: SoundCloudTrack, session: SoundCloudSession) async throws -> URL {
-        if track.access?.lowercased() == "blocked" {
+        guard track.access?.lowercased() == "playable" else {
             throw SoundCloudAPIError.noPlayableStream
         }
 
@@ -118,12 +117,6 @@ final class SoundCloudAPIClient {
             guard error.isRecoverableStreamLookupFailure else { throw error }
         }
 
-        // Preview tracks intentionally use the preview URL exposed by /streams.
-        if track.access?.lowercased() == "preview" {
-            if let preview = try? await previewStreamURL(identifier: track.resolvedURN, session: session) {
-                return preview
-            }
-        }
 
         throw SoundCloudAPIError.noPlayableStream
     }
@@ -184,17 +177,6 @@ final class SoundCloudAPIClient {
         }
 
         throw SoundCloudAPIError.noPlayableStream
-    }
-
-    private func previewStreamURL(
-        identifier: String,
-        session: SoundCloudSession
-    ) async throws -> URL? {
-        let streams: SoundCloudStreams = try await get(
-            path: "/tracks/\(encoded(identifier))/streams",
-            session: session
-        )
-        return streams.previewURL
     }
 
     func like(track: SoundCloudTrack, session: SoundCloudSession) async throws {

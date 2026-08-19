@@ -373,7 +373,7 @@ struct SoundCloudNativeView: View {
     private var emptySubtitle: String {
         if store.selectedSection == .search {
             return session.isConnected
-                ? "Поиск идёт через официальный SoundCloud API от твоего аккаунта."
+                ? "Полные треки играют нативно. Ограниченные — через официальный SoundCloud Widget, если сам SoundCloud разрешает воспроизведение."
                 : "Без входа используется публичный SoundCloud transport. Аккаунт Unixgram от этого не зависит."
         }
         return "Эта часть доступна после входа в SoundCloud."
@@ -456,10 +456,14 @@ private struct SoundCloudTrackRow: View {
                         .foregroundStyle(.white)
                         .lineLimit(1)
 
-                    Text(track.user?.username ?? "SoundCloud")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(track.user?.username ?? "SoundCloud")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+
+                        accessBadge
+                    }
 
                     if let count = track.playbackCount, count > 0 {
                         Text("\(compact(count)) прослушиваний")
@@ -492,6 +496,28 @@ private struct SoundCloudTrackRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var accessBadge: some View {
+        switch track.access?.lowercased() {
+        case "preview":
+            Text("WIDGET")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 6)
+                .frame(height: 17)
+                .background(Color.orange.opacity(0.12), in: Capsule())
+        case "blocked":
+            Text("SC")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 6)
+                .frame(height: 17)
+                .background(Color.orange.opacity(0.12), in: Capsule())
+        default:
+            EmptyView()
+        }
     }
 
     @ViewBuilder
