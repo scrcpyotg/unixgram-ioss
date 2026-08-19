@@ -126,6 +126,8 @@ final class UnixgramMusicPlayer: ObservableObject {
     private var failedToEndObserver: NSObjectProtocol?
     private var stalledObserver: NSObjectProtocol?
     private var interruptionObserver: NSObjectProtocol?
+    private var didEnterBackgroundObserver: NSObjectProtocol?
+    private var willEnterForegroundObserver: NSObjectProtocol?
     private var waitingRecoveryTask: Task<Void, Never>?
     private var isRecovering = false
     private var userWantsPlayback = false
@@ -139,6 +141,7 @@ final class UnixgramMusicPlayer: ObservableObject {
         installPlaybackStateObserver()
         installRemoteCommands()
         installAudioInterruptionObserver()
+        installAppLifecycleAudioObservers()
 
         stalledObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemPlaybackStalled,
@@ -210,6 +213,8 @@ final class UnixgramMusicPlayer: ObservableObject {
         if let failedToEndObserver { NotificationCenter.default.removeObserver(failedToEndObserver) }
         if let stalledObserver { NotificationCenter.default.removeObserver(stalledObserver) }
         if let interruptionObserver { NotificationCenter.default.removeObserver(interruptionObserver) }
+        if let didEnterBackgroundObserver { NotificationCenter.default.removeObserver(didEnterBackgroundObserver) }
+        if let willEnterForegroundObserver { NotificationCenter.default.removeObserver(willEnterForegroundObserver) }
         waitingRecoveryTask?.cancel()
     }
 
@@ -535,6 +540,41 @@ final class UnixgramMusicPlayer: ObservableObject {
                 @unknown default:
                     break
                 }
+            }
+        }
+    }
+
+    private func installAppLifecycleAudioObservers() {
+        didEnterBackgroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.userWantsPlayback else { return }
+                _ = self.configureAudioSession(reportError: false)
+
+                if self.player.currentItem?.status == .readyToPlay,
+                   self.player.timeControlStatus != .playing {
+                    self.player.isMuted = false
+                    self.player.volume = 1.0
+                    self.player.playImmediately(atRate: 1.0)
+                }
+                self.updateNowPlaying()
+            }
+        }
+
+        willEnterForegroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if self.userWantsPlayback {
+                    _ = self.configureAudioSession(reportError: false)
+                }
+                self.updateNowPlaying()
             }
         }
     }
@@ -874,47 +914,79 @@ struct UnixgramNowPlayingView: View {
     @State private var isScrubbing = false
     @State private var showQueue = false
     @State private var showError = false
+    @State private var dragOffset: CGFloat = 0
 
     private var track: UnixgramMusicTrack? { player.currentTrack }
     private var currentSC: SoundCloudTrack? { player.currentSoundCloudTrack }
 
     var body: some View {
-        ZStack {
-            background
-            LinearGradient(
-                colors: [Color.black.opacity(0.12), Color.black.opacity(0.72), Color.black.opacity(0.96)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
+        GeometryReader { proxy in
+            let pageWidth = proxy.size.width
+            let contentWidth = max(260, pageWidth - 48)
+            let artSide = min(318, max(220, pageWidth - 74))
 
-            if let track {
-                VStack(spacing: 0) {
-                    topBar(track)
-                        .padding(.horizontal, 22)
-                        .padding(.top, 8)
+            ZStack {
+                background
+                LinearGradient(
+                    colors: [Color.black.opacity(0.12), Color.black.opacity(0.72), Color.black.opacity(0.97)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
 
-                    Spacer(minLength: 20)
+                if let track {
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(spacing: 0) {
+                            topBar(track)
+                                .frame(width: contentWidth)
+                                .padding(.top, 8)
 
-                    artwork(track)
-                        .frame(maxWidth: 310, maxHeight: 310)
-                        .aspectRatio(1, contentMode: .fit)
-                        .padding(.horizontal, 34)
-                        .shadow(color: .black.opacity(0.42), radius: 26, y: 16)
+                            Spacer(minLength: 24)
 
-                    Spacer(minLength: 30)
+                            artwork(track)
+                                .frame(width: artSide, height: artSide)
+                                .shadow(color: .black.opacity(0.42), radius: 26, y: 16)
 
-                    VStack(spacing: 22) {
-                        titleBlock(track)
-                        progressBlock
-                        transportControls
-                        secondaryControls(track)
+                            Spacer(minLength: 32)
+
+                            VStack(spacing: 22) {
+                                titleBlock(track)
+                                progressBlock
+                                transportControls
+                                secondaryControls(track)
+                            }
+                            .frame(width: contentWidth)
+                            .padding(.bottom, max(30, proxy.safeAreaInsets.bottom + 18))
+                        }
+                        .frame(width: pageWidth)
+                        .frame(minHeight: proxy.size.height, alignment: .top)
                     }
-                    .padding(.horizontal, 30)
-                    .padding(.bottom, 28)
+                    .frame(width: pageWidth, height: proxy.size.height)
+                    .clipped()
                 }
             }
+            .frame(width: pageWidth, height: proxy.size.height)
+            .clipped()
+            .offset(y: max(0, dragOffset))
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 18)
+                    .onChanged { value in
+                        if value.translation.height > 0 {
+                            dragOffset = min(value.translation.height, 130)
+                        }
+                    }
+                    .onEnded { value in
+                        if value.translation.height > 90 {
+                            dismiss()
+                        }
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                            dragOffset = 0
+                        }
+                    }
+            )
         }
+        .ignoresSafeArea(edges: .bottom)
         .preferredColorScheme(.dark)
         .onAppear { sliderValue = player.currentTime }
         .onChange(of: player.currentTime) { _, value in
@@ -939,48 +1011,62 @@ struct UnixgramNowPlayingView: View {
             AsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let image):
-                    image.resizable().scaledToFill().blur(radius: 55).scaleEffect(1.25).opacity(0.42)
-                default: Color.black
+                    image
+                        .resizable()
+                        .scaledToFill()
+                        .blur(radius: 55)
+                        .scaleEffect(1.25)
+                        .opacity(0.42)
+                default:
+                    Color.black
                 }
             }
             .ignoresSafeArea()
-        } else { Color.black.ignoresSafeArea() }
+        } else {
+            Color.black.ignoresSafeArea()
+        }
     }
 
     private func topBar(_ track: UnixgramMusicTrack) -> some View {
-        HStack {
-            Button { dismiss() } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 17, weight: .bold))
-                    .frame(width: 42, height: 42)
-                    .background(.ultraThinMaterial, in: Circle())
-            }
-            .buttonStyle(.plain)
-
-            Spacer()
-
+        ZStack {
             VStack(spacing: 2) {
                 Text("СЕЙЧАС ИГРАЕТ")
                     .font(.system(size: 10, weight: .bold))
                     .tracking(1.7)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
                 Text(track.provider == "SoundCloud" ? "SoundCloud" : "Unixgram Music")
                     .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
             }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 54)
 
-            Spacer()
+            HStack {
+                Button { dismiss() } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 17, weight: .bold))
+                        .frame(width: 42, height: 42)
+                        .background(.ultraThinMaterial, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Закрыть плеер")
 
-            Menu {
-                if let url = track.externalURL { ShareLink(item: url) { Label("Поделиться", systemImage: "square.and.arrow.up") } }
-                Button("Очередь", systemImage: "list.bullet") { showQueue = true }
-                Button("Закрыть плеер", systemImage: "xmark", role: .destructive) { player.close(); dismiss() }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 17, weight: .bold))
-                    .frame(width: 42, height: 42)
-                    .background(.ultraThinMaterial, in: Circle())
+                Spacer(minLength: 0)
+
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 15, weight: .bold))
+                        .frame(width: 42, height: 42)
+                        .background(.ultraThinMaterial, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Закрыть плеер")
             }
         }
+        .frame(maxWidth: .infinity)
+        .frame(height: 46)
     }
 
     @ViewBuilder
@@ -988,32 +1074,46 @@ struct UnixgramNowPlayingView: View {
         if let url = track.coverURL {
             AsyncImage(url: url) { phase in
                 switch phase {
-                case .success(let image): image.resizable().scaledToFill()
-                default: artworkPlaceholder
+                case .success(let image):
+                    image.resizable().scaledToFill()
+                default:
+                    artworkPlaceholder
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        } else { artworkPlaceholder }
+        } else {
+            artworkPlaceholder
+        }
     }
 
     private var artworkPlaceholder: some View {
         RoundedRectangle(cornerRadius: 22, style: .continuous)
             .fill(.ultraThinMaterial)
-            .overlay { Image(systemName: "waveform").font(.system(size: 56)).foregroundStyle(.secondary) }
+            .overlay {
+                Image(systemName: "waveform")
+                    .font(.system(size: 56))
+                    .foregroundStyle(.secondary)
+            }
     }
 
     private func titleBlock(_ track: UnixgramMusicTrack) -> some View {
-        HStack(alignment: .center, spacing: 14) {
+        HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(track.title)
                     .font(.system(size: 22, weight: .bold))
                     .lineLimit(2)
+                    .minimumScaleFactor(0.76)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
                 Text(track.artist)
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
-            Spacer(minLength: 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
 
             if let sc = currentSC, SoundCloudSession.shared.isConnected {
                 Button {
@@ -1027,6 +1127,7 @@ struct UnixgramNowPlayingView: View {
                 .buttonStyle(.plain)
             }
         }
+        .frame(maxWidth: .infinity)
     }
 
     private var progressBlock: some View {
@@ -1049,35 +1150,38 @@ struct UnixgramNowPlayingView: View {
             .font(.system(size: 11, weight: .medium).monospacedDigit())
             .foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity)
     }
 
     private var transportControls: some View {
-        HStack {
+        HStack(spacing: 0) {
             Button { player.toggleShuffle() } label: {
                 Image(systemName: "shuffle")
                     .foregroundStyle(player.shuffleEnabled ? Color.orange : Color.white.opacity(0.62))
-                    .frame(width: 44, height: 44)
+                    .frame(width: 42, height: 44)
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
             Button { Task { await player.previous() } } label: {
-                Image(systemName: "backward.end.fill").font(.system(size: 27, weight: .semibold))
+                Image(systemName: "backward.end.fill")
+                    .font(.system(size: 26, weight: .semibold))
+                    .frame(width: 44, height: 52)
             }
             .disabled(!player.canGoPrevious && player.currentTime <= 4)
 
-            Spacer()
+            Spacer(minLength: 8)
 
             Button {
                 player.isPlaying ? player.pause() : player.resume()
             } label: {
                 ZStack {
-                    Circle().fill(Color.white).frame(width: 76, height: 76)
+                    Circle().fill(Color.white).frame(width: 72, height: 72)
                     if player.isLoading {
                         ProgressView().tint(.black)
                     } else {
                         Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 29, weight: .bold))
+                            .font(.system(size: 28, weight: .bold))
                             .foregroundStyle(.black)
                             .offset(x: player.isPlaying ? 0 : 2)
                     }
@@ -1085,32 +1189,37 @@ struct UnixgramNowPlayingView: View {
             }
             .buttonStyle(.plain)
 
-            Spacer()
+            Spacer(minLength: 8)
 
             Button { Task { await player.next() } } label: {
-                Image(systemName: "forward.end.fill").font(.system(size: 27, weight: .semibold))
+                Image(systemName: "forward.end.fill")
+                    .font(.system(size: 26, weight: .semibold))
+                    .frame(width: 44, height: 52)
             }
             .disabled(!player.canGoNext && player.repeatMode != .all)
 
-            Spacer()
+            Spacer(minLength: 8)
 
             Button { player.cycleRepeatMode() } label: {
                 Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
                     .foregroundStyle(player.repeatMode == .off ? Color.white.opacity(0.62) : Color.orange)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 42, height: 44)
             }
         }
+        .frame(maxWidth: .infinity)
         .foregroundStyle(.white)
     }
 
     private func secondaryControls(_ track: UnixgramMusicTrack) -> some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             Label(track.provider ?? "UNIXGRAM MUSIC", systemImage: "music.note")
                 .font(.system(size: 10, weight: .bold))
-                .tracking(1.25)
+                .tracking(1.1)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
 
-            Spacer()
+            Spacer(minLength: 6)
 
             if let url = track.externalURL {
                 ShareLink(item: url) {
@@ -1126,6 +1235,7 @@ struct UnixgramNowPlayingView: View {
                     .background(.ultraThinMaterial, in: Circle())
             }
         }
+        .frame(maxWidth: .infinity)
     }
 
     private func formatTime(_ seconds: Double) -> String {
