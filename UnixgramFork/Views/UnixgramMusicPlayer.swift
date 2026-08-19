@@ -93,13 +93,36 @@ final class UnixgramMusicPlayer: ObservableObject {
     private let player = AVPlayer()
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
+    private var playerStatusObservation: NSKeyValueObservation?
+    private var itemStatusObservation: NSKeyValueObservation?
+    private var failedToEndObserver: NSObjectProtocol?
 
     private init() {
         // Do not surface an audio-session alert just because the singleton was created.
         // The session is activated again immediately before actual playback.
         _ = configureAudioSession(reportError: false)
         installTimeObserver()
+        installPlaybackStateObserver()
         installRemoteCommands()
+
+        failedToEndObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemFailedToPlayToEndTime,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            Task { @MainActor [weak self] in
+                guard let self,
+                      let failed = note.object as? AVPlayerItem,
+                      failed === self.player.currentItem else { return }
+
+                self.isPlaying = false
+                self.isLoading = false
+                let underlying = (note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error) ?? failed.error
+                self.errorMessage = underlying.map { "SoundCloud не удалось воспроизвести поток: \($0.localizedDescription)" }
+                    ?? "SoundCloud не удалось воспроизвести аудиопоток."
+                self.updateNowPlaying()
+            }
+        }
 
         endObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
@@ -121,6 +144,7 @@ final class UnixgramMusicPlayer: ObservableObject {
     deinit {
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+        if let failedToEndObserver { NotificationCenter.default.removeObserver(failedToEndObserver) }
     }
 
     func isCurrent(_ track: UnixgramMusicTrack) -> Bool {
@@ -140,7 +164,7 @@ final class UnixgramMusicPlayer: ObservableObject {
             return
         }
 
-        play(track, url: url)
+        Task { await prepareAndPlay(track, url: url) }
     }
 
     func pause() {
@@ -155,8 +179,9 @@ final class UnixgramMusicPlayer: ObservableObject {
             isPlaying = false
             return
         }
-        player.play()
-        isPlaying = true
+        player.isMuted = false
+        player.volume = 1.0
+        player.playImmediately(atRate: 1.0)
         updateNowPlaying()
     }
 
@@ -177,7 +202,10 @@ final class UnixgramMusicPlayer: ObservableObject {
         currentTime = 0
         duration = 0
         errorMessage = nil
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        itemStatusObservation = nil
+        let nowPlaying = MPNowPlayingInfoCenter.default()
+        nowPlaying.nowPlayingInfo = nil
+        nowPlaying.playbackState = .stopped
 
         // Let other audio apps regain their session when Unixgram closes the player.
         try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
@@ -187,7 +215,7 @@ final class UnixgramMusicPlayer: ObservableObject {
         errorMessage = "Для этого трека Unixgram не вернул previewUrl. Можно открыть оригинал в музыкальном сервисе."
     }
 
-    private func play(_ track: UnixgramMusicTrack, url: URL) {
+    private func prepareAndPlay(_ track: UnixgramMusicTrack, url: URL) async {
         guard configureAudioSession() else {
             isPlaying = false
             isLoading = false
@@ -195,15 +223,58 @@ final class UnixgramMusicPlayer: ObservableObject {
         }
 
         isLoading = true
+        errorMessage = nil
         currentTrack = track
         currentTime = 0
         duration = track.durationMs.map { Double($0) / 1000.0 } ?? 0
 
-        let item = AVPlayerItem(url: url)
+        let asset = AVURLAsset(url: url)
+
+        do {
+            let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+            guard !audioTracks.isEmpty else {
+                isLoading = false
+                isPlaying = false
+                errorMessage = "SoundCloud вернул поток без доступной аудиодорожки."
+                return
+            }
+        } catch {
+            isLoading = false
+            isPlaying = false
+            errorMessage = "Не удалось подготовить SoundCloud-аудио: \(error.localizedDescription)"
+            return
+        }
+
+        let item = AVPlayerItem(asset: asset)
+        item.preferredForwardBufferDuration = 2.0
+
+        itemStatusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self, weak item] observed, _ in
+            Task { @MainActor [weak self, weak item] in
+                guard let self, let item, item === self.player.currentItem else { return }
+                switch observed.status {
+                case .readyToPlay:
+                    self.player.isMuted = false
+                    self.player.volume = 1.0
+                    self.player.playImmediately(atRate: 1.0)
+                case .failed:
+                    self.isLoading = false
+                    self.isPlaying = false
+                    self.errorMessage = observed.error.map {
+                        "Не удалось воспроизвести SoundCloud: \($0.localizedDescription)"
+                    } ?? "Не удалось воспроизвести SoundCloud-поток."
+                    self.updateNowPlaying()
+                case .unknown:
+                    self.isLoading = true
+                @unknown default:
+                    break
+                }
+            }
+        }
+
+        player.pause()
         player.replaceCurrentItem(with: item)
-        player.play()
-        isPlaying = true
-        isLoading = false
+        player.isMuted = false
+        player.volume = 1.0
         updateNowPlaying()
     }
 
@@ -239,6 +310,30 @@ final class UnixgramMusicPlayer: ObservableObject {
                    itemDuration.isFinite,
                    itemDuration > 0 {
                     self.duration = itemDuration
+                }
+                self.updateNowPlaying()
+            }
+        }
+    }
+
+    private func installPlaybackStateObserver() {
+        playerStatusObservation = player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] observed, _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                switch observed.timeControlStatus {
+                case .playing:
+                    self.isPlaying = true
+                    self.isLoading = false
+                case .waitingToPlayAtSpecifiedRate:
+                    self.isPlaying = false
+                    self.isLoading = self.currentTrack != nil
+                case .paused:
+                    self.isPlaying = false
+                    if observed.currentItem?.status == .readyToPlay {
+                        self.isLoading = false
+                    }
+                @unknown default:
+                    self.isPlaying = false
                 }
                 self.updateNowPlaying()
             }
@@ -283,7 +378,9 @@ final class UnixgramMusicPlayer: ObservableObject {
             MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
         ]
         if duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = duration }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        let center = MPNowPlayingInfoCenter.default()
+        center.nowPlayingInfo = info
+        center.playbackState = isPlaying ? .playing : .paused
     }
 }
 
