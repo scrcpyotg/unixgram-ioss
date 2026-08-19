@@ -97,42 +97,104 @@ final class SoundCloudAPIClient {
             throw SoundCloudAPIError.noPlayableStream
         }
 
-        // Primary path from the current SoundCloud OpenAPI: track URN.
+        // Official SoundCloud custom-player flow:
+        // authorize /tracks/{track}/stream and use its redirect target as the media URL.
         do {
-            if let url = try await officialStreamURL(identifier: track.resolvedURN, session: session) {
-                return url
-            }
+            return try await redirectedStreamURL(
+                identifier: track.resolvedURN,
+                session: session
+            )
         } catch let error as SoundCloudAPIError {
             guard error.isRecoverableStreamLookupFailure else { throw error }
         }
 
-        // SoundCloud is in the middle of the id -> URN migration. Some stream backends
-        // still accept/expect the numeric id even when metadata already exposes a URN.
+        // Numeric-id fallback while SoundCloud finishes the id -> URN migration.
         do {
-            if let url = try await officialStreamURL(identifier: String(track.id), session: session) {
-                return url
-            }
+            return try await redirectedStreamURL(
+                identifier: String(track.id),
+                session: session
+            )
         } catch let error as SoundCloudAPIError {
             guard error.isRecoverableStreamLookupFailure else { throw error }
         }
 
-        // Last-resort fallback for public tracks. This does not expose user cookies or
-        // OAuth tokens and uses the existing logged-out SoundCloud transport.
-        if track.access?.lowercased() != "blocked" {
-            if let url = try? await SoundCloudPublicClient.shared.streamURL(for: track) {
-                return url
+        // Preview tracks intentionally use the preview URL exposed by /streams.
+        if track.access?.lowercased() == "preview" {
+            if let preview = try? await previewStreamURL(identifier: track.resolvedURN, session: session) {
+                return preview
             }
         }
 
         throw SoundCloudAPIError.noPlayableStream
     }
 
-    private func officialStreamURL(identifier: String, session: SoundCloudSession) async throws -> URL? {
+    private func redirectedStreamURL(
+        identifier: String,
+        session: SoundCloudSession,
+        allowRefreshRetry: Bool = true
+    ) async throws -> URL {
+        let accessToken = try await session.validAccessToken()
+        let url = baseURL
+            .appendingPathComponent("tracks")
+            .appendingPathComponent(identifier)
+            .appendingPathComponent("stream")
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 20
+        request.setValue("OAuth \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("*/*", forHTTPHeaderField: "Accept")
+
+        let redirectDelegate = SoundCloudRedirectCaptureDelegate()
+        let ephemeral = URLSessionConfiguration.ephemeral
+        ephemeral.requestCachePolicy = .reloadIgnoringLocalCacheData
+        let urlSession = URLSession(configuration: ephemeral)
+
+        let (data, response) = try await urlSession.data(for: request, delegate: redirectDelegate)
+
+        guard let http = response as? HTTPURLResponse else {
+            throw SoundCloudAPIError.invalidResponse
+        }
+
+        if http.statusCode == 401, allowRefreshRetry {
+            _ = try await session.forceRefreshAccessToken()
+            return try await redirectedStreamURL(
+                identifier: identifier,
+                session: session,
+                allowRefreshRetry: false
+            )
+        }
+
+        if let redirectURL = await redirectDelegate.redirectURL {
+            return redirectURL
+        }
+
+        // Some deployments may follow/resolve internally and return a media URL directly.
+        if (200..<300).contains(http.statusCode),
+           let finalURL = http.url,
+           finalURL.host != baseURL.host {
+            return finalURL
+        }
+
+        guard (200..<400).contains(http.statusCode) else {
+            throw SoundCloudAPIError.http(
+                http.statusCode,
+                readableAPIError(status: http.statusCode, data: data)
+            )
+        }
+
+        throw SoundCloudAPIError.noPlayableStream
+    }
+
+    private func previewStreamURL(
+        identifier: String,
+        session: SoundCloudSession
+    ) async throws -> URL? {
         let streams: SoundCloudStreams = try await get(
             path: "/tracks/\(encoded(identifier))/streams",
             session: session
         )
-        return streams.preferredURL
+        return streams.previewURL
     }
 
     func like(track: SoundCloudTrack, session: SoundCloudSession) async throws {
@@ -248,4 +310,31 @@ final class SoundCloudAPIClient {
     }
 
     private struct EmptyResponse: Decodable {}
+}
+
+
+private actor SoundCloudRedirectCaptureDelegate: NSObject, URLSessionTaskDelegate {
+    private(set) var redirectURL: URL?
+
+    nonisolated func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        let target = request.url
+        Task { [weak self] in
+            await self?.storeRedirect(target)
+        }
+
+        // Stop before URLSession downloads the audio body.
+        completionHandler(nil)
+    }
+
+    private func storeRedirect(_ url: URL?) {
+        if redirectURL == nil {
+            redirectURL = url
+        }
+    }
 }
