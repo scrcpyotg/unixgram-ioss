@@ -95,7 +95,9 @@ final class UnixgramMusicPlayer: ObservableObject {
     private var endObserver: NSObjectProtocol?
 
     private init() {
-        configureAudioSession()
+        // Do not surface an audio-session alert just because the singleton was created.
+        // The session is activated again immediately before actual playback.
+        _ = configureAudioSession(reportError: false)
         installTimeObserver()
         installRemoteCommands()
 
@@ -149,7 +151,10 @@ final class UnixgramMusicPlayer: ObservableObject {
 
     func resume() {
         guard player.currentItem != nil else { return }
-        configureAudioSession()
+        guard configureAudioSession() else {
+            isPlaying = false
+            return
+        }
         player.play()
         isPlaying = true
         updateNowPlaying()
@@ -173,6 +178,9 @@ final class UnixgramMusicPlayer: ObservableObject {
         duration = 0
         errorMessage = nil
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+
+        // Let other audio apps regain their session when Unixgram closes the player.
+        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
     }
 
     func showUnavailableMessage() {
@@ -180,7 +188,12 @@ final class UnixgramMusicPlayer: ObservableObject {
     }
 
     private func play(_ track: UnixgramMusicTrack, url: URL) {
-        configureAudioSession()
+        guard configureAudioSession() else {
+            isPlaying = false
+            isLoading = false
+            return
+        }
+
         isLoading = true
         currentTrack = track
         currentTime = 0
@@ -194,13 +207,23 @@ final class UnixgramMusicPlayer: ObservableObject {
         updateNowPlaying()
     }
 
-    private func configureAudioSession() {
+    @discardableResult
+    private func configureAudioSession(reportError: Bool = true) -> Bool {
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default, options: [.allowAirPlay, .allowBluetoothA2DP])
+
+            // `.playback` already enables normal output routing, including AirPlay and
+            // Bluetooth A2DP where available. Explicit `.allowAirPlay` is only valid
+            // when using `.playAndRecord`, and passing it with `.playback` can produce
+            // OSStatus -50 (invalid parameter) on iOS.
+            try session.setCategory(.playback, mode: .default, options: [])
             try session.setActive(true)
+            return true
         } catch {
-            errorMessage = "Не удалось включить аудио: \(error.localizedDescription)"
+            if reportError {
+                errorMessage = "Не удалось включить аудио: \(error.localizedDescription)"
+            }
+            return false
         }
     }
 
@@ -354,7 +377,7 @@ struct UnixgramMusicRow: View {
     }
 
     private var placeholder: some View {
-        RoundedRectangle(cornerRadius: compact ? 8 : 10, style: .continuous)
+        RoundedRectangle(cornerRadius: compact ? 8 : 10)
             .fill(Color.white.opacity(0.08))
             .overlay {
                 Image(systemName: "music.note")
@@ -454,7 +477,7 @@ struct UnixgramMiniMusicPlayer: View {
     }
 
     private var miniPlaceholder: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
+        RoundedRectangle(cornerRadius: 10)
             .fill(Color.white.opacity(0.08))
             .overlay { Image(systemName: "music.note").foregroundStyle(.secondary) }
     }
