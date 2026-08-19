@@ -1,4 +1,4 @@
-import SwiftUI
+=import SwiftUI
 import AVFoundation
 import MediaPlayer
 import UIKit
@@ -96,6 +96,7 @@ final class UnixgramMusicPlayer: ObservableObject {
     private var playerStatusObservation: NSKeyValueObservation?
     private var itemStatusObservation: NSKeyValueObservation?
     private var failedToEndObserver: NSObjectProtocol?
+    private var soundCloudAssetLoader: SoundCloudAuthenticatedAssetLoader?
 
     private init() {
         // Do not surface an audio-session alert just because the singleton was created.
@@ -203,6 +204,7 @@ final class UnixgramMusicPlayer: ObservableObject {
         duration = 0
         errorMessage = nil
         itemStatusObservation = nil
+        soundCloudAssetLoader = nil
         let nowPlaying = MPNowPlayingInfoCenter.default()
         nowPlaying.nowPlayingInfo = nil
         nowPlaying.playbackState = .stopped
@@ -228,7 +230,16 @@ final class UnixgramMusicPlayer: ObservableObject {
         currentTime = 0
         duration = track.durationMs.map { Double($0) / 1000.0 } ?? 0
 
-        let asset = AVURLAsset(url: url)
+        let asset: AVURLAsset
+        if track.provider?.lowercased() == "soundcloud",
+           SoundCloudSession.shared.isConnected {
+            let loader = SoundCloudAuthenticatedAssetLoader()
+            soundCloudAssetLoader = loader
+            asset = loader.makeAsset(for: url)
+        } else {
+            soundCloudAssetLoader = nil
+            asset = AVURLAsset(url: url)
+        }
 
         do {
             let audioTracks = try await asset.loadTracks(withMediaType: .audio)
