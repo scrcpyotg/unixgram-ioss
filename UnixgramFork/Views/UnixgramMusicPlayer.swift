@@ -110,12 +110,18 @@ final class UnixgramMusicPlayer: ObservableObject {
     @Published private(set) var queue: [UnixgramMusicTrack] = []
     @Published private(set) var queueIndex: Int?
     @Published private(set) var likedSoundCloudTrackIDs: Set<Int> = []
+    @Published private(set) var playbackBackend: PlaybackBackend = .native
     @Published var repeatMode: RepeatMode = .off
     @Published var shuffleEnabled = false
     @Published var errorMessage: String?
 
     enum RepeatMode: String, CaseIterable {
         case off, all, one
+    }
+
+    enum PlaybackBackend: String {
+        case native
+        case soundCloudWidget
     }
 
     private let player = AVPlayer()
@@ -142,6 +148,7 @@ final class UnixgramMusicPlayer: ObservableObject {
         installRemoteCommands()
         installAudioInterruptionObserver()
         installAppLifecycleAudioObservers()
+        installSoundCloudWidgetBridge()
 
         stalledObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemPlaybackStalled,
@@ -233,6 +240,17 @@ final class UnixgramMusicPlayer: ObservableObject {
     }
 
     var currentSoundCloudTrack: SoundCloudTrack? { currentTrack?.soundCloudTrack }
+    var usesSoundCloudWidget: Bool { playbackBackend == .soundCloudWidget }
+
+    var soundCloudAccessLabel: String? {
+        guard let access = currentSoundCloudTrack?.access?.lowercased() else { return nil }
+        switch access {
+        case "playable": return "Full track"
+        case "preview": return "SoundCloud Widget"
+        case "blocked": return "SoundCloud Widget"
+        default: return nil
+        }
+    }
 
     func markSoundCloudLikes(_ ids: Set<Int>) {
         likedSoundCloudTrackIDs.formUnion(ids)
@@ -315,7 +333,7 @@ final class UnixgramMusicPlayer: ObservableObject {
     func toggle(_ track: UnixgramMusicTrack) {
         errorMessage = nil
 
-        if isCurrent(track), player.currentItem != nil {
+        if isCurrent(track), player.currentItem != nil || (isCurrent(track) && usesSoundCloudWidget) {
             isPlaying ? pause() : resume()
             return
         }
@@ -334,13 +352,24 @@ final class UnixgramMusicPlayer: ObservableObject {
     func pause() {
         userWantsPlayback = false
         waitingRecoveryTask?.cancel()
-        player.pause()
+        if usesSoundCloudWidget {
+            SoundCloudWidgetEngine.shared.pause()
+        } else {
+            player.pause()
+        }
         isPlaying = false
         updateNowPlaying()
     }
 
     func resume() {
         userWantsPlayback = true
+
+        if usesSoundCloudWidget {
+            _ = configureAudioSession(reportError: false)
+            SoundCloudWidgetEngine.shared.play()
+            return
+        }
+
         guard player.currentItem != nil else {
             if let index = queueIndex { Task { await playQueueItem(at: index, resumeAt: currentTime) } }
             return
@@ -358,7 +387,11 @@ final class UnixgramMusicPlayer: ObservableObject {
     func seek(to seconds: Double) {
         guard seconds.isFinite else { return }
         let bounded = max(0, min(seconds, duration > 0 ? duration : seconds))
-        player.seek(to: CMTime(seconds: bounded, preferredTimescale: 600))
+        if usesSoundCloudWidget {
+            SoundCloudWidgetEngine.shared.seek(to: bounded)
+        } else {
+            player.seek(to: CMTime(seconds: bounded, preferredTimescale: 600))
+        }
         currentTime = bounded
         updateNowPlaying()
     }
@@ -368,6 +401,8 @@ final class UnixgramMusicPlayer: ObservableObject {
         waitingRecoveryTask?.cancel()
         player.pause()
         player.replaceCurrentItem(with: nil)
+        SoundCloudWidgetEngine.shared.reset()
+        playbackBackend = .native
         currentTrack = nil
         isPlaying = false
         isLoading = false
@@ -396,6 +431,8 @@ final class UnixgramMusicPlayer: ObservableObject {
             return
         }
 
+        playbackBackend = .native
+        SoundCloudWidgetEngine.shared.pause()
         isLoading = true
         errorMessage = nil
         currentTrack = track
@@ -468,28 +505,83 @@ final class UnixgramMusicPlayer: ObservableObject {
         userWantsPlayback = true
         isLoading = true
         errorMessage = nil
+        queueIndex = index
 
         do {
             if let sc = track.soundCloudTrack {
-                let streamURL: URL
-                if SoundCloudSession.shared.isConnected {
-                    streamURL = try await SoundCloudAPIClient.shared.streamURL(for: sc, session: SoundCloudSession.shared)
-                } else {
-                    streamURL = try await SoundCloudPublicClient.shared.streamURL(for: sc)
+                let access = sc.access?.lowercased() ?? "playable"
+
+                if access != "playable" {
+                    try prepareSoundCloudWidget(track: track, resumeAt: resumeAt)
+                    return
                 }
-                track = UnixgramMusicTrack.soundCloud(sc, streamURL: streamURL)
-                queue[index] = track
+
+                do {
+                    let streamURL: URL
+                    if SoundCloudSession.shared.isConnected {
+                        streamURL = try await SoundCloudAPIClient.shared.streamURL(for: sc, session: SoundCloudSession.shared)
+                    } else {
+                        streamURL = try await SoundCloudPublicClient.shared.streamURL(for: sc)
+                    }
+                    track = UnixgramMusicTrack.soundCloud(sc, streamURL: streamURL)
+                    queue[index] = track
+                } catch {
+                    // A fully playable track may still fail on a custom stream because of a
+                    // transient CDN/API condition. Fall back to SoundCloud's own widget
+                    // instead of failing the whole player.
+                    if track.externalURL != nil {
+                        try prepareSoundCloudWidget(track: track, resumeAt: resumeAt)
+                        return
+                    }
+                    throw error
+                }
             }
+
             guard let url = track.streamURL else {
+                if track.soundCloudTrack != nil, track.externalURL != nil {
+                    try prepareSoundCloudWidget(track: track, resumeAt: resumeAt)
+                    return
+                }
                 throw NSError(domain: "UnixgramMusic", code: 1, userInfo: [NSLocalizedDescriptionKey: "Нет доступного аудиопотока."])
             }
-            queueIndex = index
+
             await prepareAndPlay(track, url: url, resumeAt: resumeAt)
         } catch {
             isLoading = false
             isPlaying = false
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func prepareSoundCloudWidget(track: UnixgramMusicTrack, resumeAt: Double?) throws {
+        guard let permalink = track.externalURL else {
+            throw NSError(
+                domain: "SoundCloudWidget",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "SoundCloud не вернул permalink для официального Widget."]
+            )
+        }
+
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+        itemStatusObservation = nil
+        waitingRecoveryTask?.cancel()
+
+        playbackBackend = .soundCloudWidget
+        currentTrack = track
+        currentTime = max(0, resumeAt ?? 0)
+        duration = track.durationMs.map { Double($0) / 1000.0 } ?? 0
+        isPlaying = false
+        isLoading = true
+        errorMessage = nil
+
+        _ = configureAudioSession(reportError: false)
+        SoundCloudWidgetEngine.shared.load(
+            permalinkURL: permalink,
+            autoplay: userWantsPlayback,
+            seekTo: resumeAt
+        )
+        updateNowPlaying()
     }
 
     private func scheduleRecoveryIfStillStalled() {
@@ -506,7 +598,8 @@ final class UnixgramMusicPlayer: ObservableObject {
     }
 
     private func recoverCurrentSoundCloudStream(reason: String) async {
-        guard !isRecovering, userWantsPlayback,
+        guard !usesSoundCloudWidget,
+              !isRecovering, userWantsPlayback,
               let index = queueIndex, queue.indices.contains(index),
               queue[index].soundCloudTrack != nil else { return }
         isRecovering = true
@@ -554,8 +647,10 @@ final class UnixgramMusicPlayer: ObservableObject {
                 guard let self, self.userWantsPlayback else { return }
                 _ = self.configureAudioSession(reportError: false)
 
-                if self.player.currentItem?.status == .readyToPlay,
-                   self.player.timeControlStatus != .playing {
+                if self.usesSoundCloudWidget {
+                    SoundCloudWidgetEngine.shared.play()
+                } else if self.player.currentItem?.status == .readyToPlay,
+                          self.player.timeControlStatus != .playing {
                     self.player.isMuted = false
                     self.player.volume = 1.0
                     self.player.playImmediately(atRate: 1.0)
@@ -603,7 +698,7 @@ final class UnixgramMusicPlayer: ObservableObject {
         let interval = CMTime(seconds: 0.35, preferredTimescale: 600)
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, !self.usesSoundCloudWidget else { return }
                 let seconds = time.seconds
                 if seconds.isFinite { self.currentTime = max(0, seconds) }
 
@@ -620,7 +715,7 @@ final class UnixgramMusicPlayer: ObservableObject {
     private func installPlaybackStateObserver() {
         playerStatusObservation = player.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] observed, _ in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, !self.usesSoundCloudWidget else { return }
                 switch observed.timeControlStatus {
                 case .playing:
                     self.waitingRecoveryTask?.cancel()
@@ -641,6 +736,57 @@ final class UnixgramMusicPlayer: ObservableObject {
                     self.isPlaying = false
                 }
                 self.updateNowPlaying()
+            }
+        }
+    }
+
+    private func installSoundCloudWidgetBridge() {
+        SoundCloudWidgetEngine.shared.onEvent = { [weak self] event in
+            Task { @MainActor [weak self] in
+                guard let self, self.usesSoundCloudWidget else { return }
+
+                switch event {
+                case .ready(let duration):
+                    if duration > 0 { self.duration = duration }
+                    self.isLoading = self.userWantsPlayback
+                    self.updateNowPlaying()
+
+                case .playing:
+                    self.isLoading = false
+                    self.isPlaying = true
+                    self.updateNowPlaying()
+
+                case .paused:
+                    self.isLoading = false
+                    self.isPlaying = false
+                    self.updateNowPlaying()
+
+                case .progress(let position, let duration):
+                    self.currentTime = max(0, position)
+                    if let duration, duration > 0 { self.duration = duration }
+                    self.updateNowPlaying()
+
+                case .finished:
+                    self.currentTime = 0
+                    self.isPlaying = false
+                    self.isLoading = false
+                    if self.repeatMode == .one {
+                        SoundCloudWidgetEngine.shared.seek(to: 0)
+                        self.userWantsPlayback = true
+                        SoundCloudWidgetEngine.shared.play()
+                    } else if self.canGoNext || self.repeatMode == .all {
+                        await self.next()
+                    } else {
+                        self.userWantsPlayback = false
+                        self.updateNowPlaying()
+                    }
+
+                case .error(let message):
+                    self.isLoading = false
+                    self.isPlaying = false
+                    self.errorMessage = message
+                    self.updateNowPlaying()
+                }
             }
         }
     }
@@ -876,6 +1022,14 @@ struct UnixgramMiniMusicPlayer: View {
                             .stroke(Color.white.opacity(0.12), lineWidth: 1)
                     }
             )
+            .background {
+                if player.usesSoundCloudWidget {
+                    SoundCloudWidgetKeepAliveView()
+                        .frame(width: 2, height: 2)
+                        .opacity(0.01)
+                        .allowsHitTesting(false)
+                }
+            }
             .onChange(of: player.errorMessage) { _, newValue in showError = newValue != nil }
             .alert("Музыка", isPresented: $showError) {
                 Button("OK") { player.errorMessage = nil }
@@ -1111,6 +1265,15 @@ struct UnixgramNowPlayingView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
+
+                if player.usesSoundCloudWidget {
+                    HStack(spacing: 5) {
+                        Image(systemName: "waveform")
+                        Text("Официальный SoundCloud Widget")
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.orange)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(1)
@@ -1212,12 +1375,23 @@ struct UnixgramNowPlayingView: View {
 
     private func secondaryControls(_ track: UnixgramMusicTrack) -> some View {
         HStack(spacing: 12) {
-            Label(track.provider ?? "UNIXGRAM MUSIC", systemImage: "music.note")
-                .font(.system(size: 10, weight: .bold))
-                .tracking(1.1)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+            if track.provider == "SoundCloud", let sourceURL = track.externalURL {
+                Link(destination: sourceURL) {
+                    Label("SOUNDCLOUD", systemImage: "waveform")
+                        .font(.system(size: 10, weight: .bold))
+                        .tracking(1.1)
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+            } else {
+                Label(track.provider ?? "UNIXGRAM MUSIC", systemImage: "music.note")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(1.1)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
 
             Spacer(minLength: 6)
 
