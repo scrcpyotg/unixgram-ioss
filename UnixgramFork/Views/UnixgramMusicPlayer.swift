@@ -1,4 +1,4 @@
-=import SwiftUI
+import SwiftUI
 import AVFoundation
 import MediaPlayer
 import UIKit
