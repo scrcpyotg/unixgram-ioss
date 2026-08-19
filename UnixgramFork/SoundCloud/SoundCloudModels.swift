@@ -197,13 +197,14 @@ struct SoundCloudStreams: Codable {
         [
             hlsAac160URL,
             hlsAac96URL,
-            httpMp3128URL,
-            hlsMp3128URL,
-            hlsOpus64URL,
             previewMp3128URL
         ]
         .compactMap { $0.flatMap(URL.init(string:)) }
         .first
+    }
+
+    var previewURL: URL? {
+        previewMp3128URL.flatMap(URL.init(string:))
     }
 }
 
