@@ -166,11 +166,11 @@ private struct RealProfileEditPane: View {
             .padding(.horizontal, 28)
             .padding(.vertical, 20)
         }
-        .onChange(of: avatarPickerItem) { _, item in
+        .onChange(of: avatarPickerItem) { item in
             guard let item else { return }
             Task { await replaceProfileImage(item: item, isAvatar: true) }
         }
-        .onChange(of: coverPickerItem) { _, item in
+        .onChange(of: coverPickerItem) { item in
             guard let item else { return }
             Task { await replaceProfileImage(item: item, isAvatar: false) }
         }

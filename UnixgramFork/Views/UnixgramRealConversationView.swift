@@ -187,7 +187,7 @@ struct UnixgramRealConversationView: View {
                 .padding(.vertical, 10)
                 .background(Color.white.opacity(0.06))
                 .clipShape(RoundedRectangle(cornerRadius: 20))
-                .onChange(of: draft) {
+                .onChange(of: draft) { _ in
                     scheduleTyping()
                 }
 

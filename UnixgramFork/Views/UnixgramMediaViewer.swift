@@ -212,7 +212,7 @@ private struct ZoomableRemoteImage: View {
                             }
                         }
                 case .failure:
-                    ContentUnavailableView(
+                    UnixgramContentUnavailableView(
                         "Не удалось открыть фото",
                         systemImage: "photo.badge.exclamationmark"
                     )

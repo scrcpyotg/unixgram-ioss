@@ -71,7 +71,7 @@ struct UnixgramLaunchAuthView: View {
             UnixgramWebLoginView(presentation: .launch)
                 .environmentObject(liveSession)
         }
-        .onChange(of: liveSession.isAuthenticated) {
+        .onChange(of: liveSession.isAuthenticated) { _ in
             if liveSession.isAuthenticated {
                 showOfficialLogin = false
             }

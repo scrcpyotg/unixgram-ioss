@@ -41,7 +41,7 @@ struct UnixgramAllRealNotificationsView: View {
             await load()
             consumePendingDeepLink()
         }
-        .onChange(of: session.pendingNotificationDeepLink) { _, _ in
+        .onChange(of: session.pendingNotificationDeepLink) { _ in
             consumePendingDeepLink()
         }
         .navigationDestination(isPresented: Binding(

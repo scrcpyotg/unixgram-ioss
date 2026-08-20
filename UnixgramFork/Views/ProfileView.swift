@@ -167,8 +167,8 @@ struct ProfileView: View {
             ProfileSettingsSheet(isPresented: $showSettings)
                 .presentationDetents([.fraction(0.82), .large])
                 .presentationDragIndicator(.hidden)
-                .presentationCornerRadius(30)
-                .presentationBackground(.clear)
+                .unixgramPresentationCornerRadius(30)
+                .unixgramClearPresentationBackground()
         }
         .toolbar(.hidden, for: .navigationBar)
     }

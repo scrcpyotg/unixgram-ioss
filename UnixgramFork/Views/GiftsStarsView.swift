@@ -72,7 +72,7 @@ struct GiftsStarsView: View {
             .sheet(item: $selectedGift) { gift in
                 GiftDetailSheet(gift: gift, balance: $balance)
                     .presentationDetents([.medium])
-                    .presentationCornerRadius(28)
+                    .unixgramPresentationCornerRadius(28)
             }
         }
         .preferredColorScheme(.dark)

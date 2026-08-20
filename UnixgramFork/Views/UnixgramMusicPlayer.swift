@@ -501,50 +501,27 @@ final class UnixgramMusicPlayer: ObservableObject {
 
     private func playQueueItem(at index: Int, resumeAt: Double?) async {
         guard queue.indices.contains(index) else { return }
-        var track = queue[index]
+        let track = queue[index]
         userWantsPlayback = true
         isLoading = true
         errorMessage = nil
         queueIndex = index
 
         do {
-            if let sc = track.soundCloudTrack {
-                let access = sc.access?.lowercased() ?? "playable"
-
-                if access != "playable" {
-                    try prepareSoundCloudWidget(track: track, resumeAt: resumeAt)
-                    return
-                }
-
-                do {
-                    let streamURL: URL
-                    if SoundCloudSession.shared.isConnected {
-                        streamURL = try await SoundCloudAPIClient.shared.streamURL(for: sc, session: SoundCloudSession.shared)
-                    } else {
-                        streamURL = try await SoundCloudPublicClient.shared.streamURL(for: sc)
-                    }
-                    track = UnixgramMusicTrack.soundCloud(sc, streamURL: streamURL)
-                    queue[index] = track
-                } catch {
-                    // A fully playable track may still fail on a custom stream because of a
-                    // transient CDN/API condition. Fall back to SoundCloud's own widget
-                    // instead of failing the whole player.
-                    if track.externalURL != nil {
-                        try prepareSoundCloudWidget(track: track, resumeAt: resumeAt)
-                        return
-                    }
-                    throw error
-                }
+            if track.soundCloudTrack != nil {
+                // Desktop-fork style: all SoundCloud audio stays inside the real
+                // soundcloud.com web player. The API is metadata/likes only.
+                try prepareSoundCloudWidget(track: track, resumeAt: resumeAt)
+                return
             }
 
             guard let url = track.streamURL else {
-                if track.soundCloudTrack != nil, track.externalURL != nil {
-                    try prepareSoundCloudWidget(track: track, resumeAt: resumeAt)
-                    return
-                }
-                throw NSError(domain: "UnixgramMusic", code: 1, userInfo: [NSLocalizedDescriptionKey: "Нет доступного аудиопотока."])
+                throw NSError(
+                    domain: "UnixgramMusic",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Нет доступного аудиопотока."]
+                )
             }
-
             await prepareAndPlay(track, url: url, resumeAt: resumeAt)
         } catch {
             isLoading = false
@@ -558,7 +535,7 @@ final class UnixgramMusicPlayer: ObservableObject {
             throw NSError(
                 domain: "SoundCloudWidget",
                 code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "SoundCloud не вернул permalink для официального Widget."]
+                userInfo: [NSLocalizedDescriptionKey: "SoundCloud не вернул permalink для Web Player."]
             )
         }
 
@@ -1030,7 +1007,7 @@ struct UnixgramMiniMusicPlayer: View {
                         .allowsHitTesting(false)
                 }
             }
-            .onChange(of: player.errorMessage) { _, newValue in showError = newValue != nil }
+            .onChange(of: player.errorMessage) { newValue in showError = newValue != nil }
             .alert("Музыка", isPresented: $showError) {
                 Button("OK") { player.errorMessage = nil }
             } message: {
@@ -1069,6 +1046,7 @@ struct UnixgramNowPlayingView: View {
     @State private var showQueue = false
     @State private var showError = false
     @State private var dragOffset: CGFloat = 0
+    @State private var showSoundCloudWebSession = false
 
     private var track: UnixgramMusicTrack? { player.currentTrack }
     private var currentSC: SoundCloudTrack? { player.currentSoundCloudTrack }
@@ -1143,10 +1121,10 @@ struct UnixgramNowPlayingView: View {
         .ignoresSafeArea(edges: .bottom)
         .preferredColorScheme(.dark)
         .onAppear { sliderValue = player.currentTime }
-        .onChange(of: player.currentTime) { _, value in
+        .onChange(of: player.currentTime) { value in
             if !isScrubbing { sliderValue = value }
         }
-        .onChange(of: player.errorMessage) { _, value in showError = value != nil }
+        .onChange(of: player.errorMessage) { value in showError = value != nil }
         .alert("Музыка", isPresented: $showError) {
             Button("OK") { player.errorMessage = nil }
         } message: {
@@ -1156,6 +1134,9 @@ struct UnixgramNowPlayingView: View {
             UnixgramMusicQueueView()
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showSoundCloudWebSession) {
+            SoundCloudWebSessionView()
         }
     }
 
@@ -1267,12 +1248,17 @@ struct UnixgramNowPlayingView: View {
                     .minimumScaleFactor(0.8)
 
                 if player.usesSoundCloudWidget {
-                    HStack(spacing: 5) {
-                        Image(systemName: "waveform")
-                        Text("Официальный SoundCloud Widget")
+                    Button {
+                        showSoundCloudWebSession = true
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "globe")
+                            Text(SoundCloudWidgetEngine.shared.likelySignedIn ? "SoundCloud Web · вход выполнен" : "SoundCloud Web · войти")
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.orange)
                     }
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.orange)
+                    .buttonStyle(.plain)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

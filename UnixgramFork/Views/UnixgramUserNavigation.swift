@@ -109,7 +109,7 @@ struct UnixgramConnectionsView: View {
                 }
                 .listRowBackground(Color.clear)
             } else if users.isEmpty {
-                ContentUnavailableView(
+                UnixgramContentUnavailableView(
                     kind == .followers ? "Подписчиков пока нет" : "Подписок пока нет",
                     systemImage: kind == .followers ? "person.2" : "person.crop.circle.badge.checkmark"
                 )

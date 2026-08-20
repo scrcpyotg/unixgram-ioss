@@ -98,7 +98,7 @@ struct StoriesExperienceView: View {
         .sheet(isPresented: $showingEditor) {
             StoryEditorView()
                 .presentationDetents([.large])
-                .presentationCornerRadius(30)
+                .unixgramPresentationCornerRadius(30)
         }
     }
 

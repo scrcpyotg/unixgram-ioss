@@ -33,7 +33,7 @@ struct ChatView: View {
                         endPoint: .bottom
                     )
                 }
-                .onChange(of: messages.count) {
+                .onChange(of: messages.count) { _ in
                     if let id = messages.last?.id {
                         withAnimation { proxy.scrollTo(id, anchor: .bottom) }
                     }

@@ -15,7 +15,7 @@ struct UnixgramProfileViewsSheet: View {
                     ProgressView("Загружаем просмотры…")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if recentViewers.isEmpty {
-                    ContentUnavailableView(
+                    UnixgramContentUnavailableView(
                         "Пока нет просмотров",
                         systemImage: "eye",
                         description: Text(emptyDescription)

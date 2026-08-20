@@ -32,7 +32,7 @@ struct RealChatView: View {
                         endPoint: .bottom
                     )
                 )
-                .onChange(of: messages.count) {
+                .onChange(of: messages.count) { _ in
                     if let id = messages.last?.id {
                         withAnimation { proxy.scrollTo(id, anchor: .bottom) }
                     }
@@ -46,7 +46,7 @@ struct RealChatView: View {
         .sheet(isPresented: $showingGiftPicker) {
             GiftsStarsView(mode: .picker)
                 .presentationDetents([.fraction(0.78), .large])
-                .presentationCornerRadius(30)
+                .unixgramPresentationCornerRadius(30)
         }
     }
 

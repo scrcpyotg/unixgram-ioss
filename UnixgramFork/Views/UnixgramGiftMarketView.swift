@@ -68,7 +68,7 @@ struct UnixgramGiftMarketView: View {
         .sheet(item: $selectedGift) { gift in
             giftDetail(gift)
                 .presentationDetents([.medium, .large])
-                .presentationCornerRadius(28)
+                .unixgramPresentationCornerRadius(28)
         }
         .confirmationDialog(
             pendingPurchase.map { "Купить \($0.title)?" } ?? "Купить подарок?",

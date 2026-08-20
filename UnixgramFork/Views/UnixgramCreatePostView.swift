@@ -104,10 +104,10 @@ struct UnixgramCreatePostView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .onChange(of: selectedPhotoItems) { _, newItems in
+        .onChange(of: selectedPhotoItems) { newItems in
             Task { await preparePhotos(newItems) }
         }
-        .onChange(of: content) { _, newValue in
+        .onChange(of: content) { newValue in
             if newValue.count > characterLimit {
                 content = String(newValue.prefix(characterLimit))
             }
