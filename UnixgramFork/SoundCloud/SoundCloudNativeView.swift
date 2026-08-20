@@ -105,6 +105,7 @@ struct SoundCloudNativeView: View {
 
     @State private var showBrokerSetup = false
     @State private var showNowPlaying = false
+    @State private var showSoundCloudWebSession = false
     @State private var brokerURLText = SoundCloudConfig.brokerBaseURL?.absoluteString ?? ""
 
     var body: some View {
@@ -136,10 +137,13 @@ struct SoundCloudNativeView: View {
         .fullScreenCover(isPresented: $showNowPlaying) {
             UnixgramNowPlayingView()
         }
-        .onChange(of: store.selectedSection) {
+        .sheet(isPresented: $showSoundCloudWebSession) {
+            SoundCloudWebSessionView()
+        }
+        .onChange(of: store.selectedSection) { _ in
             Task { await store.loadCurrentSection() }
         }
-        .onChange(of: session.isConnected) {
+        .onChange(of: session.isConnected) { _ in
             if !session.isConnected, store.selectedSection != .search {
                 store.selectedSection = .search
                 store.tracks = []
@@ -178,6 +182,14 @@ struct SoundCloudNativeView: View {
                 ProgressView()
             } else if session.isConnected {
                 Menu {
+                    Button {
+                        showSoundCloudWebSession = true
+                    } label: {
+                        Label(
+                            SoundCloudWidgetEngine.shared.likelySignedIn ? "SoundCloud Web подключён" : "Войти в SoundCloud Web",
+                            systemImage: "globe"
+                        )
+                    }
                     Button("Обновить профиль") {
                         Task { await session.restoreIfNeeded() }
                     }
@@ -188,8 +200,21 @@ struct SoundCloudNativeView: View {
                     accountAvatar
                 }
             } else {
-                Button {
-                    if SoundCloudConfig.brokerBaseURL == nil {
+                HStack(spacing: 8) {
+                    Button {
+                        showSoundCloudWebSession = true
+                    } label: {
+                        Image(systemName: "globe")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(.orange)
+                            .frame(width: 38, height: 38)
+                            .background(Color.orange.opacity(0.12))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        if SoundCloudConfig.brokerBaseURL == nil {
                         showBrokerSetup = true
                     } else {
                         Task { await session.connect() }
@@ -204,7 +229,8 @@ struct SoundCloudNativeView: View {
                         .overlay(Capsule().stroke(Color.orange.opacity(0.55)))
                         .clipShape(Capsule())
                 }
-                .buttonStyle(.plain)
+                    .buttonStyle(.plain)
+                }
             }
         }
         .padding(.horizontal, 18)
@@ -373,7 +399,7 @@ struct SoundCloudNativeView: View {
     private var emptySubtitle: String {
         if store.selectedSection == .search {
             return session.isConnected
-                ? "Полные треки играют нативно. Ограниченные — через официальный SoundCloud Widget, если сам SoundCloud разрешает воспроизведение."
+                ? "Все треки открываются через реальный SoundCloud Web Player в persistent Web-сессии. API используется для поиска, лайков и метаданных."
                 : "Без входа используется публичный SoundCloud transport. Аккаунт Unixgram от этого не зависит."
         }
         return "Эта часть доступна после входа в SoundCloud."
