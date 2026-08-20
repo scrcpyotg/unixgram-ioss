@@ -46,6 +46,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
+            IPHONEOS_DEPLOYMENT_TARGET=16.0 \
             build | tee build/build.log
 
       - name: Locate and validate app bundle
@@ -73,6 +74,7 @@ jobs:
           echo "Bundle ID: $BUNDLE_ID"
           echo "Version: $VERSION ($BUILD)"
           echo "Minimum iOS: $MIN_IOS"
+          test "$MIN_IOS" = "16.0"
           file "$APP_PATH/$EXECUTABLE"
           lipo -info "$APP_PATH/$EXECUTABLE"
 
