@@ -6,7 +6,7 @@ extension View {
     @ViewBuilder
     func unixgramPresentationCornerRadius(_ radius: CGFloat) -> some View {
         if #available(iOS 16.4, *) {
-            self.unixgramPresentationCornerRadius(radius)
+            self.presentationCornerRadius(radius)
         } else {
             self
         }
@@ -15,7 +15,7 @@ extension View {
     @ViewBuilder
     func unixgramClearPresentationBackground() -> some View {
         if #available(iOS 16.4, *) {
-            self.unixgramClearPresentationBackground()
+            self.presentationBackground(.clear)
         } else {
             self
         }
