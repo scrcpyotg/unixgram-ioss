@@ -85,9 +85,9 @@ struct ProfileView: View {
                     .font(.system(size: 19))
 
                     Text("а также ")
-                        .foregroundStyle(.white)
+                        .foregroundColor(.white)
                     + Text("@aeternaldeV, @regret, @vivid, @exg888,\n@aloha, @akiko, @elio, @velvet, @soulless,\n@doomed")
-                        .foregroundStyle(UGTheme.blue)
+                        .foregroundColor(UGTheme.blue)
 
                     HStack(spacing: 12) {
                         BadgeGlyph(text: "1", tint: .gray)
@@ -102,8 +102,8 @@ struct ProfileView: View {
                     metadata("calendar", "На Unixgram с 16 авг. 2026 г.")
 
                     HStack(spacing: 28) {
-                        Text("0 ").bold() + Text("Подписки").foregroundStyle(.secondary)
-                        Text("2 ").bold() + Text("Подписчики").foregroundStyle(.secondary)
+                        Text("0 ").bold() + Text("Подписки").foregroundColor(.secondary)
+                        Text("2 ").bold() + Text("Подписчики").foregroundColor(.secondary)
                     }
                     .font(.system(size: 20))
 

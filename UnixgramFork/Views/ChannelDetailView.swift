@@ -99,8 +99,8 @@ struct ChannelDetailView: View {
                         .foregroundStyle(.secondary)
 
                     HStack(spacing: 30) {
-                        Text("1 ").bold() + Text("подписчиков").foregroundStyle(.secondary)
-                        Text("0 ").bold() + Text("публикаций").foregroundStyle(.secondary)
+                        Text("1 ").bold() + Text("подписчиков").foregroundColor(.secondary)
+                        Text("0 ").bold() + Text("публикаций").foregroundColor(.secondary)
                     }
                     .font(.system(size: 18))
 

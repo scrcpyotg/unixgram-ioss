@@ -38,8 +38,8 @@ struct NotificationsView: View {
 
                 HStack {
                     Text("Непрочитано: ")
-                        .foregroundStyle(.secondary)
-                    + Text("2").bold().foregroundStyle(.white)
+                        .foregroundColor(.secondary)
+                    + Text("2").bold().foregroundColor(.white)
                     Spacer()
                     Text("Прочитать всё")
                         .font(.system(size: 19))
