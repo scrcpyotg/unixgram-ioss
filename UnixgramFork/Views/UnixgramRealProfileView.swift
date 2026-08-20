@@ -123,19 +123,22 @@ struct UnixgramRealProfileView: View {
 
     private func profileBody(_ account: UGCurrentAccount?) -> some View {
         GeometryReader { geometry in
-            let viewportWidth = max(1, geometry.size.width)
+            let viewportWidth = geometry.size.width
 
-            ScrollView {
+            ScrollView(.vertical, showsIndicators: true) {
                 LazyVStack(spacing: 0) {
-                    profileHeader(account)
-                        .frame(width: viewportWidth, alignment: .topLeading)
+                    profileHeader(account, width: viewportWidth)
+
                     profileTabs
                         .frame(width: viewportWidth)
                         .background(Color.black)
+
                     tabContent
                         .frame(width: viewportWidth, alignment: .topLeading)
                 }
-                .frame(width: viewportWidth, alignment: .topLeading)
+                // Important: vertical ScrollView content is pinned to the real viewport
+                // width. No child can make the whole profile wider than the iPhone.
+                .frame(width: viewportWidth, alignment: .top)
             }
             .frame(width: viewportWidth, height: geometry.size.height)
             .background(Color.black)
@@ -166,16 +169,29 @@ struct UnixgramRealProfileView: View {
 
     // MARK: Header
 
-    private func profileHeader(_ account: UGCurrentAccount?) -> some View {
+    private func profileHeader(_ account: UGCurrentAccount?, width: CGFloat) -> some View {
         let profile = content.profile
         let displayName = profile?.displayName ?? account?.displayName ?? account?.username ?? targetUsername
         let handle = profile?.username ?? account?.username ?? targetUsername
         let accent = premiumAccent
 
+        let sideInset: CGFloat = 18
+        let heroCoverHeight: CGFloat = 285
+        let avatarSize: CGFloat = 120
+        let avatarOverlap: CGFloat = 60
+        let heroHeight = heroCoverHeight + avatarSize - avatarOverlap
+        let controlsWidth = max(0, width - sideInset * 2)
+        let actionsAvailableWidth = max(186, controlsWidth - avatarSize - 8)
+        let titleReserve: CGFloat = isOwnProfile ? 116 : 70
+        let titleWidth = max(110, width - titleReserve * 2)
+
         return VStack(spacing: 0) {
+            // Cover + top controls + avatar/actions live in ONE fixed-width hero.
+            // The avatar is no longer moved with a negative offset, so it cannot
+            // be clipped at the cover boundary.
             ZStack(alignment: .top) {
                 cover(url: profile?.coverUrl ?? account?.coverUrl)
-                    .frame(height: 285)
+                    .frame(width: width, height: heroCoverHeight)
                     .clipped()
 
                 LinearGradient(
@@ -183,100 +199,100 @@ struct UnixgramRealProfileView: View {
                     startPoint: .top,
                     endPoint: .bottom
                 )
+                .frame(width: width, height: heroCoverHeight)
 
-                GeometryReader { proxy in
-                    let sideReserve: CGFloat = isOwnProfile ? 116 : 68
-                    let centerWidth = max(110, proxy.size.width - sideReserve * 2)
-
-                    ZStack {
-                        VStack(alignment: .center, spacing: 2) {
-                            HStack(spacing: 5) {
-                                Text(displayName)
-                                    .font(.system(size: 20, weight: .bold))
-                                    .foregroundStyle(accent ?? Color.white)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.70)
-
-                                if let gift = profile?.statusGift {
-                                    statusGiftButton(gift, size: 21)
-                                }
-                            }
-                            .frame(maxWidth: centerWidth)
-
-                            Text("\(profile?.postsCount ?? content.posts.count) постов")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                ZStack {
+                    VStack(alignment: .center, spacing: 2) {
+                        HStack(spacing: 5) {
+                            Text(displayName)
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundStyle(accent ?? Color.white)
                                 .lineLimit(1)
-                        }
-                        .frame(width: centerWidth)
+                                .minimumScaleFactor(0.68)
 
-                        HStack(spacing: 0) {
-                            circleActionButton("chevron.left") { dismiss() }
-
-                            Spacer(minLength: 0)
-
-                            HStack(spacing: 8) {
-                                if isOwnProfile {
-                                    profileViewsButton(profile?.profileViews)
-                                }
-                                circleActionButton("qrcode") {}
+                            if let gift = profile?.statusGift {
+                                statusGiftButton(gift, size: 21)
                             }
                         }
-                        .padding(.horizontal, 16)
-                        .frame(width: proxy.size.width)
-                    }
-                    .frame(width: proxy.size.width, height: 52)
-                }
-                .frame(height: 52)
-                .padding(.top, 15)
-            }
+                        .frame(width: titleWidth)
 
-            VStack(alignment: .leading, spacing: 13) {
+                        Text("\(profile?.postsCount ?? content.posts.count) постов")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .frame(width: titleWidth)
+
+                    HStack(spacing: 0) {
+                        circleActionButton("chevron.left") { dismiss() }
+
+                        Spacer(minLength: 0)
+
+                        HStack(spacing: 8) {
+                            if isOwnProfile {
+                                profileViewsButton(profile?.profileViews)
+                            }
+                            circleActionButton("qrcode") {}
+                        }
+                    }
+                    .frame(width: controlsWidth)
+                }
+                .frame(width: width, height: 52)
+                .padding(.top, 15)
+
                 HStack(alignment: .top, spacing: 8) {
                     avatar(
                         url: profile?.avatarUrl ?? account?.avatarUrl,
                         name: displayName
                     )
-                    .frame(width: 120, height: 120)
+                    .frame(width: avatarSize, height: avatarSize)
                     .clipShape(Circle())
                     .overlay(Circle().stroke(.black, lineWidth: 4))
                     .overlay(
                         Circle()
-                            .stroke(accent?.opacity(0.78) ?? Color.clear, lineWidth: accent == nil ? 0 : 2)
+                            .stroke(
+                                accent?.opacity(0.78) ?? Color.clear,
+                                lineWidth: accent == nil ? 0 : 2
+                            )
                     )
-                    .offset(y: -59)
+                    .zIndex(2)
 
                     Spacer(minLength: 0)
 
                     profileActions(profile)
-                        .frame(width: isOwnProfile ? 186 : nil, alignment: .trailing)
-                        .layoutPriority(1)
+                        .frame(width: min(actionsAvailableWidth, 186), alignment: .trailing)
+                        .zIndex(1)
                 }
-                .frame(maxWidth: .infinity)
-                .clipped()
-                .padding(.bottom, -59)
+                .frame(width: controlsWidth, height: avatarSize, alignment: .top)
+                .padding(.top, heroCoverHeight - avatarOverlap)
+            }
+            .frame(width: width, height: heroHeight, alignment: .top)
 
+            VStack(alignment: .leading, spacing: 13) {
                 HStack(spacing: 7) {
                     Text(displayName)
                         .font(.system(size: 27, weight: .bold))
                         .foregroundStyle(accent ?? Color.white)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.72)
-                        .layoutPriority(1)
+                        .minimumScaleFactor(0.68)
+                        .layoutPriority(2)
 
                     if let badge = profile?.verificationBadge ?? account?.verificationBadge,
                        badge != "NONE" {
                         Image(systemName: "checkmark.seal.fill")
                             .foregroundStyle(.cyan)
+                            .fixedSize()
                     }
 
                     if profile?.premium == true || account?.premium == true {
                         Image(systemName: "sparkles")
                             .foregroundStyle(accent ?? Color.purple)
+                            .fixedSize()
                     }
 
                     if let gift = profile?.statusGift {
                         statusGiftButton(gift, size: 27)
+                            .fixedSize()
                     }
 
                     if let number = profile?.registrationNumber ?? account?.registrationNumber {
@@ -288,12 +304,12 @@ struct UnixgramRealProfileView: View {
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 8)
                         .frame(height: 30)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .layoutPriority(-1)
                         .background(Color.white.opacity(0.06))
                         .clipShape(Capsule())
+                        .fixedSize(horizontal: true, vertical: false)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 Text("@\(handle)")
                     .font(.system(size: 19))
@@ -391,12 +407,12 @@ struct UnixgramRealProfileView: View {
                         .padding(.top, 2)
                 }
             }
-            .padding(.horizontal, 18)
+            .frame(width: max(0, width - sideInset * 2), alignment: .leading)
             .padding(.bottom, 0)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(width: width, alignment: .leading)
     }
+
 
     @ViewBuilder
     private func profileActions(_ profile: UGPublicProfile?) -> some View {
@@ -412,7 +428,7 @@ struct UnixgramRealProfileView: View {
 
                 ownProfileActionButtons
             }
-            .frame(width: 186, alignment: .trailing)
+            .frame(width: 186, height: 42, alignment: .trailing)
         } else {
             HStack(spacing: 7) {
                 Button {
