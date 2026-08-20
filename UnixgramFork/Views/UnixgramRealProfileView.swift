@@ -122,37 +122,46 @@ struct UnixgramRealProfileView: View {
     }
 
     private func profileBody(_ account: UGCurrentAccount?) -> some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                profileHeader(account)
-                profileTabs
-                    .background(Color.black)
-                tabContent
+        GeometryReader { geometry in
+            let viewportWidth = max(1, geometry.size.width)
+
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    profileHeader(account)
+                        .frame(width: viewportWidth, alignment: .topLeading)
+                    profileTabs
+                        .frame(width: viewportWidth)
+                        .background(Color.black)
+                    tabContent
+                        .frame(width: viewportWidth, alignment: .topLeading)
+                }
+                .frame(width: viewportWidth, alignment: .topLeading)
             }
-            .frame(maxWidth: .infinity)
+            .frame(width: viewportWidth, height: geometry.size.height)
+            .background(Color.black)
+            .refreshable {
+                liveSession.showRefreshingNotice()
+                guard !username.isEmpty else {
+                    liveSession.hideNotice()
+                    return
+                }
+                await content.refresh(username: username, selectedTab: selectedTab)
+                if content.errorMessage != nil {
+                    liveSession.showOfflineNotice()
+                } else {
+                    liveSession.hideNotice(after: 0.5)
+                }
+            }
+            .alert("Ошибка Unixgram", isPresented: Binding(
+                get: { content.errorMessage != nil },
+                set: { if !$0 { content.errorMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(content.errorMessage ?? "")
+            }
         }
         .background(Color.black)
-        .refreshable {
-            liveSession.showRefreshingNotice()
-            guard !username.isEmpty else {
-                liveSession.hideNotice()
-                return
-            }
-            await content.refresh(username: username, selectedTab: selectedTab)
-            if content.errorMessage != nil {
-                liveSession.showOfflineNotice()
-            } else {
-                liveSession.hideNotice(after: 0.5)
-            }
-        }
-        .alert("Ошибка Unixgram", isPresented: Binding(
-            get: { content.errorMessage != nil },
-            set: { if !$0 { content.errorMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(content.errorMessage ?? "")
-        }
     }
 
     // MARK: Header
@@ -386,7 +395,7 @@ struct UnixgramRealProfileView: View {
             .padding(.bottom, 0)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
