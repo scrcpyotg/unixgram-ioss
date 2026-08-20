@@ -306,10 +306,10 @@ struct UnixgramRealProfileView: View {
                    !aliases.isEmpty {
                     (
                         Text("а также ")
-                            .foregroundStyle(.secondary)
+                            .foregroundColor(.secondary)
                         +
                         Text(aliases.map { "@\($0)" }.joined(separator: ", "))
-                            .foregroundStyle(accent ?? Color.blue)
+                            .foregroundColor(accent ?? Color.blue)
                     )
                     .font(.system(size: 16))
                 }
