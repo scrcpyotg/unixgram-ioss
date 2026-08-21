@@ -834,6 +834,56 @@ actor UnixgramRealAPIClient {
         )
     }
 
+    /// Real Unixgram web endpoint captured from the DonateModal chunk:
+    /// POST /api/social/posts/{postId}/donate
+    /// { "amount": Int, "message": String? }
+    func donateToPost(
+        postId: String,
+        amount: Int,
+        message: String? = nil
+    ) async throws -> UGPostDonationMutation {
+        struct Body: Encodable {
+            let amount: Int
+            let message: String?
+
+            enum CodingKeys: String, CodingKey {
+                case amount
+                case message
+            }
+
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(amount, forKey: .amount)
+
+                if let message {
+                    try container.encode(message, forKey: .message)
+                } else {
+                    try container.encodeNil(forKey: .message)
+                }
+            }
+        }
+
+        guard (1...1_000_000).contains(amount) else {
+            throw UnixgramClientError.invalidDonationAmount
+        }
+
+        let normalizedMessage = message?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .prefix(200)
+        let finalMessage = normalizedMessage.map(String.init)
+        let messageOrNil = (finalMessage?.isEmpty == false) ? finalMessage : nil
+
+        try await ensureCSRF()
+
+        return try await request(
+            path: "/api/social/posts/\(postId)/donate",
+            method: "POST",
+            body: Body(amount: amount, message: messageOrNil),
+            requiresCSRF: true,
+            refererPath: "/post/\(postId)"
+        )
+    }
+
     func createPostComment(
         postId: String,
         content: String,
@@ -1119,12 +1169,19 @@ actor UnixgramRealAPIClient {
     }
 }
 
+
+struct UGPostDonationMutation: Decodable, Sendable {
+    let amount: Int
+    let donorBalance: Int
+}
+
 enum UnixgramClientError: LocalizedError {
     case notAuthenticated
     case rateLimited
     case invalidResponse
     case loginSessionMissing
     case emptyComment
+    case invalidDonationAmount
 
     var errorDescription: String? {
         switch self {
@@ -1133,6 +1190,7 @@ enum UnixgramClientError: LocalizedError {
         case .invalidResponse: "Unixgram вернул неизвестный ответ"
         case .loginSessionMissing: "Не удалось получить сессию из веб-входа"
         case .emptyComment: "Комментарий не может быть пустым"
+        case .invalidDonationAmount: "Количество звёзд должно быть от 1 до 1 000 000"
         }
     }
 }

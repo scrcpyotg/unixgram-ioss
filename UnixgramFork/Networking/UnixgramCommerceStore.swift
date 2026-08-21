@@ -12,6 +12,13 @@ final class UnixgramCommerceStore: ObservableObject {
 
     private init() {}
 
+    /// Applies the exact post-donation balance returned by Unixgram.
+    /// This avoids waiting for UnixPlace/account caches to catch up after a Stars transfer.
+    func applyConfirmedStarsBalance(_ balance: Int) {
+        starsBalance = max(0, balance)
+        lastError = nil
+    }
+
     func refreshStars(fallback account: UGCurrentAccount?) async {
         guard !isRefreshingStars else { return }
         isRefreshingStars = true
