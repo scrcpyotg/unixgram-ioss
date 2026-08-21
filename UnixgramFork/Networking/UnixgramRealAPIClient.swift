@@ -686,6 +686,82 @@ actor UnixgramRealAPIClient {
     }
 
 
+
+    struct UploadedChatMedia: Sendable {
+        let url: String
+        let thumb: String?
+        let posterUrl: String?
+    }
+
+    enum ChatUploadKind: Sendable {
+        case image
+        case file
+
+        fileprivate var multipartValue: String {
+            switch self {
+            case .image: return "chat-image"
+            case .file: return "chat-file"
+            }
+        }
+    }
+
+    /// Uploads a chat attachment using the exact multipart contract captured
+    /// from Unixgram Web:
+    /// - image -> kind=chat-image
+    /// - generic file -> kind=chat-file
+    func uploadChatAttachment(
+        data: Data,
+        filename: String,
+        mimeType: String,
+        kind: ChatUploadKind,
+        conversationId: String
+    ) async throws -> UploadedChatMedia {
+        struct UploadPayload: Decodable {
+            let url: String
+            let thumb: String?
+            let posterUrl: String?
+        }
+
+        try await ensureCSRF()
+
+        let safeFilename = filename
+            .replacingOccurrences(of: "\"", with: "_")
+            .replacingOccurrences(of: "\r", with: "_")
+            .replacingOccurrences(of: "\n", with: "_")
+
+        let boundary = "UnixgramBoundary-\(UUID().uuidString)"
+        var body = Data()
+
+        func append(_ value: String) {
+            body.append(Data(value.utf8))
+        }
+
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"file\"; filename=\"\(safeFilename)\"\r\n")
+        append("Content-Type: \(mimeType)\r\n\r\n")
+        body.append(data)
+        append("\r\n")
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"kind\"\r\n\r\n")
+        append("\(kind.multipartValue)\r\n")
+        append("--\(boundary)--\r\n")
+
+        let payload: UploadPayload = try await request(
+            pathWithQuery: "/api/account/upload",
+            method: "POST",
+            bodyData: body,
+            requiresCSRF: true,
+            contentType: "multipart/form-data; boundary=\(boundary)",
+            refererPath: "/dashboard/messages/\(conversationId)"
+        )
+
+        return UploadedChatMedia(
+            url: payload.url,
+            thumb: payload.thumb,
+            posterUrl: payload.posterUrl
+        )
+    }
+
     struct UploadedAccountMedia: Sendable {
         let url: String
         let thumb: String?
