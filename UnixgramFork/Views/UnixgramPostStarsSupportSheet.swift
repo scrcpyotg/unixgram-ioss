@@ -298,7 +298,7 @@ struct UnixgramPostStarsSupportSheet: View {
 
     private var authorName: String {
         post.author?.displayName
-            ?? post.author?.username.map { "@\($0)" }
+            ?? post.author.map { "@\($0.username)" }
             ?? post.community?.name
             ?? "автор поста"
     }
