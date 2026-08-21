@@ -13,6 +13,7 @@ struct UnixgramPostInteractionBar: View {
     @State private var isLiking = false
     @State private var isReposting = false
     @State private var showComments = false
+    @State private var showStarsSupport = false
     @State private var interactionError: String?
 
     init(
@@ -33,7 +34,7 @@ struct UnixgramPostInteractionBar: View {
     }
 
     var body: some View {
-        HStack(spacing: 18) {
+        HStack(spacing: 14) {
             Button {
                 Task { await toggleLike() }
             } label: {
@@ -61,7 +62,17 @@ struct UnixgramPostInteractionBar: View {
                 metric("eye", post.viewsCount ?? 0)
             }
 
-            Spacer()
+            if post.author?.isViewer != true {
+                Button {
+                    showStarsSupport = true
+                } label: {
+                    metric("star.fill", 0, .orange)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Поддержать пост звёздами")
+            }
+
+            Spacer(minLength: 4)
 
             if showBookmark {
                 metric(
@@ -77,6 +88,12 @@ struct UnixgramPostInteractionBar: View {
             ) {
                 commentsCount += 1
             }
+        }
+        .sheet(isPresented: $showStarsSupport) {
+            UnixgramPostStarsSupportSheet(post: post)
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+                .unixgramPresentationCornerRadius(28)
         }
         .alert(
             "Unixgram",
